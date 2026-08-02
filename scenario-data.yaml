@@ -1,0 +1,521 @@
+# 事件腳本產生器 —— 素材標籤資料庫
+#
+# 資料來源：提案者提供的 6 個情境（scenario-data.md），拆成可重新組合的素材。
+#
+# 編輯規則：
+#   1. options 決定畫面上三個選單「顯示什麼、順序如何」，由人工控制。
+#      environment 依室內／室外分組，前端會以選單群組呈現；素材標籤仍填實際環境名稱。
+#   2. assets 每一筆代表一個素材檔，tags 底下的陣列留空 [] = 該維度不限，任何選擇都適用。
+#      patient_photo 與 patient_voice 可用 gender、ageGroup 配對，避免人物與聲音的性別或年齡不符。
+#   3. 加素材時：把檔案放進對應的 assets/<role>/ 資料夾，file 只填檔名，再在下面補一筆即可，不用改程式。
+#      同一筆素材若有多個版本，file 可改用 YAML 陣列；頁面會全部顯示，播放其中一個時會暫停同組其他版本。
+#   4. 該情境「刻意沒有這個素材」（例如住宅 OHCA 沒有環境聲音）就寫 type: none 且不填 file，
+#      卡片會顯示「此情境無此素材」，跟「查無素材」區分開。
+#   5. 同一輪篩選過關的素材裡，「標了範圍的維度比較多」的那筆會勝出，通用素材只在沒有專屬素材時頂替。
+#      例如市區街道＋車禍時，標了 medicalEvent 的 ev004（路口車禍現場）會贏過任何路邊都能用的 ev003。
+#      所以留空不只是「不限」，也代表「讓位給更貼合的素材」——不確定就留空，別亂填來搶排序。
+#
+# role 說明：
+#   environment_video   環境影片
+#   ambient_sound       環境聲音
+#   patient_photo       病患樣貌照片
+#   patient_voice       病患聲音
+#   complication_video  突發狀況綠幕影片（約 10 秒）
+#   complication_voice  突發狀況聲音（1-2 句台詞，用 line 欄位寫台詞）
+#
+# 突發狀況影片與聲音會鎖定同一個突發狀況，不會出現「家屬哭喊的影片配工地同事的台詞」。
+# 突發狀況的 environment／medicalEvent 也要填：台詞是綁情境寫的（例如「抬到旁邊陰涼的地方」是工地），
+# 留空的話勾了就會配到不合理的場景。勾了但該情境沒有對應素材時，卡片會直接說這一組沒有素材。
+
+options:
+  environment:
+    室內:
+      - 住宅客廳
+      - 出租套房
+      - KTV 包廂
+    室外:
+      - 市區街道
+      - 工地
+  medicalEvent:
+    - 心跳停止（OHCA）
+    - 外傷出血
+    - 骨折（墜落）
+    - 車禍多重傷
+    - 酒醉意識不清
+    - 自傷（割腕）
+  complication:
+    - 家屬崩潰哭喊
+    - 旁人嗆聲干擾
+    - 同事欲搬動傷患
+    - 肇事雙方爭吵
+    - 同伴咆哮威脅
+    - 情緒失控自傷
+
+assets:
+  # ---------- 環境影像 ----------
+  # environment_video 可直接用 type: image 搭配 jpg/png；若 type: video，則可選填 fallback（jpg/jpeg/png 檔名或陣列）。
+  # 影片無法載入時，前端會依序嘗試 fallback 圖片。
+  - id: ev001
+    type: image
+    role: environment_video
+    file: apartment-inside.png
+    tags:
+      environment: [住宅客廳]
+      medicalEvent: []
+      complication: []
+    description: 住宅客廳
+
+  - id: ev002
+    type: image
+    role: environment_video
+    file: night-alley.png
+    tags:
+      environment: [出租套房]
+      medicalEvent: []
+      complication: []
+    description: 出租套房周邊巷弄
+
+  - id: ev003
+    type: image
+    role: environment_video
+    file: covered-sidewalk.png
+    tags:
+      environment: [市區街道]
+      medicalEvent: []
+      complication: []
+    description: 市區騎樓／路邊
+
+  - id: ev004
+    type: image
+    role: environment_video
+    file: roadside.png
+    tags:
+      environment: [市區街道]
+      medicalEvent: [車禍多重傷]
+      complication: []
+    description: 市區道路路口（車禍現場）
+
+  - id: ev005
+    type: image
+    role: environment_video
+    file: construction-site.png
+    tags:
+      environment: [工地]
+      medicalEvent: []
+      complication: []
+    description: 工地現場
+
+  # ---------- 環境聲音 ----------
+  - id: as001
+    type: audio
+    role: ambient_sound
+    file: roadside_bgm.mp3
+    tags:
+      environment: [市區街道]
+      medicalEvent: []
+      complication: []
+    description: 車流聲、環境雜音，遠處似有喇叭聲
+
+  - id: as002
+    type: audio
+    role: ambient_sound
+    file: construction-site_bgm.wav
+    tags:
+      environment: [工地]
+      medicalEvent: []
+      complication: []
+    description: 機具運轉聲、風聲，偶有工地廣播或喊話聲
+
+  - id: as003
+    type: none
+    role: ambient_sound
+    tags:
+      environment: [住宅客廳, 出租套房]
+      medicalEvent: []
+      complication: []
+    description: （無環境聲音）室內安靜
+
+  - id: as004
+    type: audio
+    role: ambient_sound
+    file: ktv.mp3
+    tags:
+      environment: [KTV 包廂]
+      medicalEvent: []
+      complication: []
+    description: 吵雜環境音
+
+  # ---------- 病患樣貌照片 ----------
+  - id: pp001
+    type: image
+    role: patient_photo
+    file: grandma_collapsed.png
+    tags:
+      environment: [住宅客廳]
+      medicalEvent: [心跳停止（OHCA）]
+      complication: []
+      gender: [female]
+      ageGroup: [elderly]
+    description: 倒在地上的阿嬤
+
+  - id: pp002
+    type: image
+    role: patient_photo
+    file: male_trauma_bleeding.png
+    tags:
+      environment: [市區街道, 工地]
+      medicalEvent: [外傷出血, 骨折（墜落）]
+      complication: []
+      gender: [male]
+      ageGroup: [adult]
+    description: 年輕男性倒坐或半躺在地上，臉部或身體有外傷出血
+
+  - id: pp003
+    type: image
+    role: patient_photo
+    file: lying_on_road.png
+    tags:
+      environment: [市區街道]
+      medicalEvent: [車禍多重傷]
+      complication: []
+      gender: [female]
+      ageGroup: [adult]
+    description: 躺在馬路上的成年女性傷者
+
+  - id: pp004
+    type: image
+    role: patient_photo
+    file: lying_on_bed.png
+    tags:
+      environment: [KTV 包廂]
+      medicalEvent: [酒醉意識不清]
+      complication: []
+      gender: [male]
+      ageGroup: [adult]
+    description: 酒後不醒人事的成年男性
+
+  - id: pp005
+    type: image
+    role: patient_photo
+    file: lying_on_bed.png
+    tags:
+      environment: [出租套房]
+      medicalEvent: [自傷（割腕）]
+      complication: []
+      gender: [male]
+      ageGroup: [adult]
+    description: 躺在套房床上的成年男性
+
+  # ---------- 病患聲音 ----------
+  - id: pv001
+    type: none
+    role: patient_voice
+    tags:
+      environment: []
+      medicalEvent: [心跳停止（OHCA）]
+      complication: []
+    description: （無病患聲音）無呼吸、無反應
+
+  - id: pv002
+    type: audio
+    role: patient_voice
+    file: painful_scream.mp3
+    tags:
+      environment: []
+      medicalEvent: [車禍多重傷,外傷出血, 骨折（墜落）]
+      complication: []
+      gender: [male]
+      ageGroup: [adult]
+    description: 成年男性痛苦哀嚎
+
+  - id: pv003
+    type: audio
+    role: patient_voice
+    file: drunk_male_moan.mp3
+    tags:
+      environment: []
+      medicalEvent: [酒醉意識不清]
+      complication: []
+      gender: [male]
+      ageGroup: [adult]
+    description: 酒醉男性意識不清的呻吟
+
+  - id: pv004
+    type: none
+    role: patient_voice
+    tags:
+      environment: []
+      medicalEvent: [自傷（割腕）]
+      complication: []
+    description: （無病患聲音）無反應
+
+  - id: pv005
+    type: audio
+    role: patient_voice
+    file:
+      - painful_female_1.mp3
+      - painful_female_2.mp3
+    tags:
+      environment: []
+      medicalEvent: [車禍多重傷, 外傷出血, 骨折（墜落）]
+      complication: []
+      gender: [female]
+      ageGroup: [adult]
+    description: 成年女性痛苦哀嚎
+
+  # ---------- 突發狀況綠幕影片（約 10 秒）----------
+  #
+  # 同一個突發狀況可以拆成好幾個片段，讓教官依現場節奏一段一段觸發（例如爭吵→越吵越兇→動手）。
+  # 作法是在素材上加 `segment:` 數字，綠幕素材與台詞各自標同一個 segment 就會配成同一段：
+  #
+  #   - id: cv004-2
+  #     type: video
+  #     role: complication_video
+  #     file: drivers_argue_2_gs.mp4
+  #     segment: 2
+  #     tags: { ..., complication: [肇事雙方爭吵] }
+  #
+  # 沒寫 `segment` 就是第 1 段，所以下面這些只有一段的素材不用動。
+  # 同一個 segment 底下放多筆素材＝多個候選，每次產生隨機挑一筆（和其他角色一樣）。
+  # 想表達「同一句話的不同 take、只播其中一個」時不要用 segment，用 `file:` 陣列。
+  - id: cv001
+    type: video
+    role: complication_video
+    file: family_cry_gs.mp4
+    tags:
+      environment: [住宅客廳, 出租套房, KTV 包廂, 市區街道]
+      medicalEvent: []
+      complication: [家屬崩潰哭喊]
+    description: 跪在一旁的年輕女生
+
+  - id: cv002
+    type: image
+    role: complication_video
+    file: bystander_agitated_gs.png
+    tags:
+      environment: [市區街道, KTV 包廂, 工地]
+      medicalEvent: [外傷出血, 車禍多重傷, 酒醉意識不清]
+      complication: [旁人嗆聲干擾]
+    description: 另一名情緒仍激動的男子在旁邊來回走動、比手畫腳，看起來隨時想再靠近衝突現場
+
+  - id: cv003
+    type: image
+    role: complication_video
+    file: male_crying.png
+    tags:
+      environment: [工地, 市區街道]
+      medicalEvent: [外傷出血, 骨折（墜落）, 心跳停止（OHCA）]
+      complication: [同事欲搬動傷患]
+    description: 同事情緒崩潰，一直作勢想把傷患扶起來或搬動他，不聽勸阻
+
+  # 這一段實拍素材切成三段，教官可依現場節奏逐段觸發；每段自帶現場收音。
+  - id: cv004-1
+    type: video
+    role: complication_video
+    file: drivers_argue_gs_part1.mp4
+    segment: 1
+    tags:
+      environment: [市區街道]
+      medicalEvent: [車禍多重傷]
+      complication: [肇事雙方爭吵]
+    description: 車禍事件雙方吵架，責怪對方亂騎車（第 1 段，約 7.6 秒）
+
+  - id: cv004-2
+    type: video
+    role: complication_video
+    file: drivers_argue_gs_part2.mp4
+    segment: 2
+    tags:
+      environment: [市區街道]
+      medicalEvent: [車禍多重傷]
+      complication: [肇事雙方爭吵]
+    description: 車禍事件雙方吵架，責怪對方亂騎車（第 2 段，約 5.9 秒）
+
+  - id: cv004-3
+    type: video
+    role: complication_video
+    file: drivers_argue_gs_part3.mp4
+    segment: 3
+    tags:
+      environment: [市區街道]
+      medicalEvent: [車禍多重傷]
+      complication: [肇事雙方爭吵]
+    description: 車禍事件雙方吵架，責怪對方亂騎車（第 3 段，約 3.7 秒）
+
+  - id: cv005
+    type: image
+    role: complication_video
+    file: male_shouting.png
+    tags:
+      environment: [KTV 包廂, 市區街道]
+      medicalEvent: [酒醉意識不清, 外傷出血]
+      complication: [同伴咆哮威脅]
+    description: 同伴對救護人員的處置覺得不耐煩，開始咆哮、作勢打人
+
+  - id: cv006
+    type: image
+    role: complication_video
+    file: male_crying.png
+    tags:
+      environment: [出租套房, 住宅客廳]
+      medicalEvent: [自傷（割腕）]
+      complication: [情緒失控自傷]
+    description: 男友情緒失控
+
+  # ---------- 突發狀況台詞（1-2 句）----------
+  #
+  # 注意：這一類的音檔「只有在該段綠幕是靜態劇照時才會播放」。
+  # 綠幕是影片時（真實素材多半自帶現場收音），聲音以影片的音軌為準，這裡的音檔不播，
+  # 免得兩個聲音疊在一起；line 台詞與 tts prompt 仍會顯示在卡片上，供現場演員對詞或日後補錄使用。
+  #
+  # tts 欄位是拿去 ElevenLabs「Eleven v3」生成配音用的 prompt，可直接複製貼上。
+  #   - audio tag 用小寫方括號寫在句子裡，效果會隨所選 voice 而變；voice 的情緒幅度不夠時，
+  #     v3 可能會把 tag 當文字念出來，換一個情緒表現力強的 voice 即可。
+  #   - 全形省略號 ⋯⋯ 產生自然停頓，逗號控制換氣，要重音就把那個詞寫成大寫（中文可改用驚嘆號堆疊）。
+  #   - stability 建議用 Creative（情緒最飽滿，但偶爾會失控，多生幾次挑一條）。
+  #   - prompt 都寫成 4 句以上而不是只有一句台詞：v3 在太短的文字上情緒容易不穩，
+  #     而且綠幕影片是 10 秒，配音長度要跟得上。用不到的句子剪掉就好。
+
+  - id: cs001
+    type: audio
+    role: complication_voice
+    file: family_cry_line.mp3
+    tags:
+      environment: [住宅客廳, 出租套房, KTV 包廂, 市區街道]
+      medicalEvent: []
+      complication: [家屬崩潰哭喊]
+    description: 女生大哭
+    line: 他到底怎麼了！他會不會死！？？？你要救他啊嗚嗚嗚嗚嗚嗚
+    tts:
+      model: Eleven v3
+      voice: 20-30 歲台灣女性，聲線偏高、情緒幅度大（挑有哭腔表現力的 voice）
+      settings: Stability = Creative，speed 1.0
+      prompt: |
+        [crying] 他到底怎麼了！他剛剛還在跟我講話啊！
+        [desperate] 他會不會死！？他會不會死啊！？你要救他啊，你救他啊！
+        [crying] 嗚嗚嗚嗚嗚⋯⋯拜託你們，拜託你們救救他⋯⋯
+        [sobbing] 求求你們快一點，快一點好不好⋯⋯我求你們了⋯⋯
+
+  - id: cs002-m
+    type: audio
+    role: complication_voice
+    file: bystander_male.mp3
+    tags:
+      environment: [市區街道, KTV 包廂, 工地]
+      medicalEvent: [外傷出血, 車禍多重傷, 酒醉意識不清]
+      complication: [旁人嗆聲干擾]
+    description: 男子嗆聲
+    line: 你們是誰叫的救護車！他活該啦！你們不要多管閒事！
+    tts:
+      model: Eleven v3
+      voice: 25-40 歲台灣男性，中低音、帶挑釁氣口
+      settings: Stability = Creative，speed 1.05（講話帶衝）
+      prompt: |
+        [angry] 你們是誰叫的救護車！誰叫的！？
+        [shouts] 他活該啦！他自己先動手的你們知不知道！
+        [frustrated] 你們不要多管閒事！這不關你們的事啦！
+        [angry] 我跟你講你們不要碰他⋯⋯不要碰他啦！
+
+  - id: cs002-f
+    type: audio
+    role: complication_voice
+    file: bystander_female.mp3
+    tags:
+      environment: [市區街道, KTV 包廂, 工地]
+      medicalEvent: [外傷出血, 車禍多重傷, 酒醉意識不清]
+      complication: [旁人嗆聲干擾]
+    description: 女子嗆聲
+    line: 你們是誰叫的救護車！他活該啦！你們不要多管閒事！
+    tts:
+      model: Eleven v3
+      voice: 年經台灣女性，帶挑釁氣口
+      settings: Stability = Creative，speed 1.05（講話帶衝）
+      prompt: |
+        [angry] 你們是誰叫的救護車！誰叫的！？
+        [shouts] 他活該啦！他自己先動手的你們知不知道！
+        [frustrated] 你們不要多管閒事！這不關你們的事啦！
+        [angry] 我跟你講你們不要碰他⋯⋯不要碰他啦！
+
+  - id: cs003
+    type: audio
+    role: complication_voice
+    file: coworker_line.mp3
+    tags:
+      environment: [工地, 市區街道]
+      medicalEvent: [外傷出血, 骨折（墜落）, 心跳停止（OHCA）]
+      complication: [同事欲搬動傷患]
+    description: 男子大叫
+    line: 不行不行，不能讓他躺在這裡，我們把他抬到旁邊陰涼的地方啦！
+    tts:
+      model: Eleven v3
+      voice: 30-45 歲台灣男性，中低音、帶台灣國語腔，語速快而慌張
+      settings: Stability = Creative，speed 1.1（慌張、催促感）
+      prompt: |
+        [nervous] [rushed] 不行不行，不能讓他躺在這裡啦！
+        [shouts] 我們把他抬到旁邊陰涼的地方啦！
+        [frustrated] 這裡太陽這麼大，他躺在這裡會受不了啦！
+        [rushed] 你、你過來幫我一下，一、二、三⋯⋯來，抬起來！
+
+  - id: cs004
+    type: audio
+    role: complication_voice
+    file: drivers_line.mp3
+    tags:
+      environment: [市區街道]
+      medicalEvent: [車禍多重傷]
+      complication: [肇事雙方爭吵]
+    description: 車輛在後方緊急煞車聲、險些撞上，伴隨咆哮與三字經
+    line: 你會不會騎車⋯⋯
+    tts:
+      model: Eleven v3
+      voice: 30-50 歲台灣男性，音量大、暴躁
+      settings: Stability = Creative，speed 1.05
+      # 後方的緊急煞車聲請另外找音效檔疊上去，不要用 TTS 生。
+      # 三字經在這裡先寫成「靠」這種程度；要更重的字眼可能會被平台過濾，
+      # 需要的話用現場收音或另外的音效補。
+      prompt: |
+        [angry] 你會不會騎車⋯⋯你到底會不會騎車啊！
+        [shouts] 紅燈你也敢衝！你眼睛是長在哪裡啊！
+        [frustrated] 靠！我車子都被你撞成這樣了你還在跟我吵！
+        [angry] 你不要走！你給我站在那裡等警察來啦！
+
+  - id: cs005
+    type: audio
+    role: complication_voice
+    file: companion_line.mp3
+    tags:
+      environment: [KTV 包廂, 市區街道]
+      medicalEvent: [酒醉意識不清, 外傷出血]
+      complication: [同伴咆哮威脅]
+    description: 怒罵救護人員的聲音
+    line: 到底會不會，快送醫啦
+    tts:
+      model: Eleven v3
+      voice: 25-40 歲台灣男性，酒後、口齒略含混、音量失控
+      settings: Stability = Creative，speed 1.0
+      prompt: |
+        [frustrated] 到底會不會啦！你們到底會不會啦！
+        [shouts] 快送醫啦！你們在弄什麼啦！
+        [angry] 弄那麼久是要弄到什麼時候！？他都這樣了你還在弄！
+        [shouts] 我跟你講，他要是有怎樣我跟你們沒完！
+
+  - id: cs006
+    type: audio
+    role: complication_voice
+    file: boyfriend_line.mp3
+    tags:
+      environment: [出租套房, 住宅客廳]
+      medicalEvent: [自傷（割腕）]
+      complication: [情緒失控自傷]
+    description: 自責、怒罵、哭泣，試圖自傷失控
+    line: 你為什麼每次都講不聽，是不是我也要跟你一起死才甘願⋯⋯（哭泣）
+    tts:
+      model: Eleven v3
+      voice: 20-30 歲台灣男性，情緒崩潰、聲音發抖，需要哭腔表現力
+      settings: Stability = Creative，speed 0.95（哭到說不出話的節奏）
+      prompt: |
+        [crying] 你為什麼每次都講不聽⋯⋯你為什麼都講不聽啊⋯⋯
+        [sorrowful] 是不是我也要跟你一起死，你才甘願⋯⋯
+        [crying] 都是我的錯⋯⋯都是我害的⋯⋯
+        [angry] 你們不要碰我！不要碰我啦！
+        [sobbing] 為什麼會這樣⋯⋯為什麼會這樣⋯⋯

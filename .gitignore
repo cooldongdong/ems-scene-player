@@ -1,0 +1,22 @@
+# 本機工具與工作紀錄
+.gstack/
+
+# 相依套件與建置輸出
+node_modules/
+dist/
+build/
+
+# Python 本機環境與快取
+.venv/
+__pycache__/
+*.py[cod]
+
+# 編輯器、作業系統與暫存檔
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# 本機執行紀錄
+*.log
