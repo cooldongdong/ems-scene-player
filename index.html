@@ -51,6 +51,14 @@
   }
   .checks label:has(input:checked) { border-color: var(--accent); background: var(--accent-dim); }
   .checks input { accent-color: var(--accent); margin: 0; }
+  /* 這個環境×事件沒有素材的突發狀況：選得到卻演不出來最傷，直接擋在選之前 */
+  .checks label.unavailable {
+    opacity: .38; cursor: not-allowed; text-decoration: line-through;
+    border-style: dashed;
+  }
+  .checks label.unavailable input { cursor: not-allowed; }
+  .coverage-note { margin: 14px 0 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
+  .coverage-note.warn { color: #ffb27a; }
 
   /* 常用情境快捷鈕：素材確定齊全的組合，點一下套用整組設定並直接產生 */
   .presets { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
@@ -96,6 +104,8 @@
   .flow-toggle input { margin: 0; accent-color: var(--accent); }
   /* 自訂／改過的情境要一眼認得出來，否則不知道哪些是自己的 */
   .preset-list button.custom { border-style: dashed; }
+  /* 引用到沒素材的突發狀況（多半是匯入別人的情境）——能點，但先講清楚 */
+  .preset-list button.broken { border-color: #ffb27a; color: #ffb27a; }
   .flow-btn-mini { font-size: 12px; padding: 4px 10px; }
   .flow-actions-tight { margin: -2px 0 4px; padding-left: 12px; }
   .flow-row.dragging { opacity: .4; }
@@ -296,6 +306,7 @@
         <div class="checks" id="checks-comp"></div>
       </div>
     </div>
+    <p class="coverage-note" id="coverage-note"></p>
     <div class="actions">
       <button class="primary" id="btn-gen" disabled>產生情境</button>
       <button id="btn-project" disabled>開啟投影視窗</button>
@@ -461,23 +472,84 @@ function syncPatientOverlayBoxes() {
   });
 }
 
-// 素材沒寫 segment 就是第 1 段；現有只有一段的資料完全不用改
-function segmentOf(asset) {
-  const value = Number(asset.segment);
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
-}
+// 素材沒寫 segment 就是第 1 段；判斷在資料層，這裡只是轉呼叫
+const segmentOf = asset => Scenarios.segmentOf(asset);
 
 // 這個突發狀況在目前條件下被拆成哪幾段
 function complicationSegments(comp, env, med) {
-  const found = new Set();
-  for (const asset of DATA.assets) {
-    if (!COMPLICATION_ROLES.includes(asset.role)) continue;
-    if (!intersects(asset.tags?.complication, [comp])) continue;
-    if (!tagAllows(asset.tags?.environment, env)) continue;
-    if (!tagAllows(asset.tags?.medicalEvent, med)) continue;
-    found.add(segmentOf(asset));
+  return Scenarios.complicationSegments(DATA.assets, comp, env, med);
+}
+
+// ---------- 把關 ----------
+// 選得到卻演不出來是最傷的一種挫折：使用者以為自己設定好了，實際上按下去什麼都沒有。
+// 5 環境 × 6 事件 × 6 突發狀況 = 180 種勾選，實際上只有 46 種會出現東西。
+// 所以「有沒有素材」必須在選之前就看得見，而不是產生之後才發現。
+let availabilityCache = { key: null, comps: null, base: null };
+
+function availabilityFor(env, med) {
+  const key = `${env}|${med}`;
+  if (availabilityCache.key !== key) {
+    availabilityCache = {
+      key,
+      comps: Scenarios.availableComplications(DATA.assets, DATA.options, env, med),
+      base: Scenarios.baseCoverage(DATA.assets, env, med),
+    };
   }
-  return found.size ? [...found].sort((a, b) => a - b) : [1];
+  return availabilityCache;
+}
+
+function complicationUsable(comp, env = $('sel-env').value, med = $('sel-med').value) {
+  const found = availabilityFor(env, med).comps.find(c => c.comp === comp);
+  return !!found && found.ok;
+}
+
+// 新增動作時要預設一個「真的能演」的狀況；沒有任何可用的就回傳第一個，
+// 讓它顯示成「此情境無素材」而不是靜靜地存進一個壞動作
+function firstUsableComplication() {
+  const env = currentScenario ? currentScenario.environment : $('sel-env').value;
+  const med = currentScenario ? currentScenario.medicalEvent : $('sel-med').value;
+  const ok = availabilityFor(env, med).comps.find(c => c.ok);
+  return ok ? ok.comp : optionsFor('complication')[0];
+}
+
+// 情境用到的狀況在它自己的環境×事件下有沒有素材（匯入別人的情境時特別重要）
+function scenarioBrokenComplications(scenario) {
+  return Scenarios.complicationsOf(scenario)
+    .filter(c => !complicationUsable(c, scenario.environment, scenario.medicalEvent));
+}
+
+const ROLE_LABEL = {
+  environment_video: '環境影像', ambient_sound: '環境聲音',
+  patient_photo: '病患照片', patient_voice: '病患聲音',
+};
+
+// 「刻意留白」（type: none）不算缺，那是資料作者的決定，不是漏洞
+function missingBaseLabels(env, med) {
+  const base = availabilityFor(env, med).base;
+  return Scenarios.BASE_ROLES.filter(r => base[r] === 'missing').map(r => ROLE_LABEL[r]);
+}
+
+// 依目前的環境×事件更新突發狀況勾選框：沒素材的直接停用並說明原因
+function refreshComplicationAvailability() {
+  if (!DATA) return;
+  const env = $('sel-env').value;
+  const med = $('sel-med').value;
+  document.querySelectorAll('#checks-comp label').forEach(label => {
+    const input = label.querySelector('input');
+    const usable = complicationUsable(input.value, env, med);
+    input.disabled = !usable;
+    label.classList.toggle('unavailable', !usable);
+    label.title = usable ? '' : `${env}／${med} 沒有「${input.value}」的綠幕素材，勾了也不會出現`;
+    // 條件變動後，原本勾著的可能已經不可用——留著會產生一組空的突發狀況卡
+    if (!usable && input.checked) input.checked = false;
+  });
+  const missing = missingBaseLabels(env, med);
+  const note = $('coverage-note');
+  const usableCount = availabilityFor(env, med).comps.filter(c => c.ok).length;
+  note.textContent = missing.length
+    ? `這個組合缺：${missing.join('、')}　·　可用的突發狀況 ${usableCount} 個`
+    : `四項基本素材齊全　·　可用的突發狀況 ${usableCount} 個`;
+  note.classList.toggle('warn', missing.length > 0);
 }
 
 const $ = id => document.getElementById(id);
@@ -551,6 +623,7 @@ function buildControls() {
   }
   box.addEventListener('change', syncScenarioActive);
 
+  refreshComplicationAvailability();
   buildScenarios();
   syncScenarioActive();
 }
@@ -615,16 +688,19 @@ function buildScenarios() {
   activeScenarios.forEach(scenario => {
     const comps = Scenarios.complicationsOf(scenario);
     const pages = Scenarios.playableSlides(scenario).length;
+    const broken = scenarioBrokenComplications(scenario);
     const btn = Object.assign(document.createElement('button'), {
       type: 'button',
-      textContent: scenario.name,
+      textContent: scenario.name + (broken.length ? ' ⚠' : ''),
       title: [
         `${scenario.environment}／${scenario.medicalEvent}`,
         comps.length ? `突發狀況：${comps.join('、')}` : '不含突發狀況',
         `${pages} 頁流程`,
+        broken.length ? `⚠ 這些狀況在此情境下沒有素材：${broken.join('、')}` : '',
         scenario.note || '',
       ].filter(Boolean).join('\n'),
     });
+    if (broken.length) btn.classList.add('broken');
     btn.dataset.scenarioId = scenario.id;
     if (scenario.source !== 'builtin') btn.classList.add('custom');
     btn.addEventListener('click', () => loadScenario(scenario));
@@ -857,7 +933,7 @@ function addAction(type) {
   if (!slide) return;
   slide.actions.push(type === 'wait'
     ? { type: 'wait', note: '' }
-    : { type: 'complication', complication: optionsFor('complication')[0] });
+    : { type: 'complication', complication: firstUsableComplication() });
   persistScenarioEdit();
 }
 
@@ -890,7 +966,7 @@ function updateAction(index, patch) {
     // 換型別等於換一個動作，殘留的舊欄位會被資料層當成雜訊
     slide.actions[index] = patch.type === 'wait'
       ? { type: 'wait', note: '' }
-      : { type: 'complication', complication: optionsFor('complication')[0] };
+      : { type: 'complication', complication: firstUsableComplication() };
   } else {
     Object.assign(action, patch);
     if (action.type === 'complication' && !action.segment) delete action.segment;
@@ -1003,59 +1079,17 @@ function saveScenarioOverride(scenario) {
   buildScenarios();
 }
 
-// 空陣列＝該維度不限
-function tagAllows(list, picked) {
-  return !list || list.length === 0 || list.includes(picked);
-}
 function intersects(list, picks) {
   return (list || []).some(v => picks.includes(v));
 }
 
-// 特異性 = 有幾個維度被指定了範圍。gender／ageGroup 不算，那是配對條件不是精準度。
-function specificity(asset) {
-  return SPECIFICITY_TAGS.reduce((score, dim) => score + ((asset.tags?.[dim] || []).length ? 1 : 0), 0);
-}
-
-function patientTagsCompatible(asset, patientPhoto) {
-  if (!patientPhoto) return true;
-  return PATIENT_PAIR_TAGS.every(tag => {
-    const candidate = asset.tags?.[tag] || [];
-    const selected = patientPhoto.tags?.[tag] || [];
-    return candidate.length === 0 || selected.length === 0 || intersects(candidate, selected);
-  });
-}
-
+// 篩選與特異性排序都在 js/scenarios.js（資料層），這裡只負責「從剩下的裡面抽一筆」。
+// 分界的理由：篩選是判斷、要被測試釘住，而且要跟「這個選項能不能用」共用同一份實作；
+// 隨機與「上次抽過什麼」是每次執行才有的狀態，測不了也不該測。
 function pickForRole(role, env, med, comps, { patientPhoto = null, memoKey = role, segment = null } = {}) {
-  const pool = DATA.assets.filter(a => a.role === role
-    && (segment === null || segmentOf(a) === segment));
-
-  // 1. 必要條件：環境／急救事件相符或通用
-  let eligible = pool.filter(a =>
-    tagAllows(a.tags?.environment, env) && tagAllows(a.tags?.medicalEvent, med));
-
-  // 病患聲音必須與本次選到的照片性別、年齡層相容；空標籤代表通用（例如無呼吸、無反應）。
-  if (role === 'patient_voice') {
-    eligible = eligible.filter(a => patientTagsCompatible(a, patientPhoto));
-  }
-
-  // 2. 綁定特定突發狀況的素材，只有在該狀況被勾選時才可用
-  eligible = eligible.filter(a => {
-    const c = a.tags?.complication || [];
-    return c.length === 0 || intersects(c, comps);
-  });
-
-  // 突發狀況素材：沒勾狀況就不出現，也不用通用素材頂替
-  if (COMPLICATION_ROLES.includes(role)) {
-    eligible = comps.length ? eligible.filter(a => intersects(a.tags?.complication, comps)) : [];
-  }
-
-  if (!eligible.length) return null;
-
-  // 3. 特異性優先：標籤填得越精準的素材越優先，通用素材只在沒有專屬素材時頂替。
-  //    例如「市區街道＋車禍」時，標了車禍的路口照要贏過任何路邊都能用的騎樓照；
-  //    沒有這一步的話兩者機率相同，專屬標籤等於只是「也能被抽到」而已。
-  const best = Math.max(...eligible.map(specificity));
-  const candidates = eligible.filter(a => specificity(a) === best);
+  const candidates = Scenarios.eligibleAssets(DATA.assets, role,
+    { env, med, comps, patientPhoto, segment });
+  if (!candidates.length) return null;
 
   // 同條件重新產生時盡量換一筆
   let picks = candidates;
@@ -2378,9 +2412,16 @@ function buildSlideEditor(doc) {
       note.addEventListener('change', () => updateAction(i, { note: note.value.trim() }));
       row.appendChild(note);
     } else {
+      // 編輯器也要把關：這個情境的環境×事件下沒素材的狀況，不該編得進去
       const compSel = doc.createElement('select');
       optionsFor('complication').forEach(c => {
-        compSel.appendChild(Object.assign(doc.createElement('option'), { value: c, textContent: c }));
+        const usable = complicationUsable(c, currentScenario.environment, currentScenario.medicalEvent);
+        const opt = Object.assign(doc.createElement('option'), {
+          value: c,
+          textContent: usable ? c : `${c}（此情境無素材）`,
+          disabled: !usable,
+        });
+        compSel.appendChild(opt);
       });
       compSel.value = action.complication;
       compSel.addEventListener('change', () => updateAction(i, { complication: compSel.value }));
@@ -2812,8 +2853,10 @@ document.addEventListener('keydown', handleFlowKey);
 
 $('btn-gen').addEventListener('click', generate);
 // 手動改選單＝離開情境：流程會指向已經不存在的素材，留著比清掉更危險
-$('sel-env').addEventListener('change', () => { syncScenarioActive(); leaveScenario(); });
-$('sel-med').addEventListener('change', () => { syncScenarioActive(); leaveScenario(); });
+// 順序有意義：先更新可用性（可能取消掉已不可用的勾選），再同步亮起狀態
+const onConditionChange = () => { refreshComplicationAvailability(); syncScenarioActive(); leaveScenario(); };
+$('sel-env').addEventListener('change', onConditionChange);
+$('sel-med').addEventListener('change', onConditionChange);
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', playScene);
 $('btn-stop').addEventListener('click', stopAll);

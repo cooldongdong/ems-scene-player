@@ -284,9 +284,156 @@
     return out;
   }
 
+  // ---------- 素材比對 ----------
+  // 這一段是從 index.html 的 pickForRole 搬過來的。搬的理由：
+  // 「這個選項能不能用」與「實際挑哪一筆素材」必須是同一份實作，
+  // 各寫一份的話，畫面上說能用、按下去卻沒東西，兩邊還都覺得自己沒錯。
+  // 隨機挑選與「上次挑過什麼」留在 index.html——那是每次執行才有的狀態，不是判斷。
+
+  const COMPLICATION_ROLES = ['complication_video', 'complication_voice'];
+  const BASE_ROLES = ['environment_video', 'ambient_sound', 'patient_photo', 'patient_voice'];
+  // 特異性只看這三個維度；gender／ageGroup 是配對條件，不是精準度
+  const SPECIFICITY_TAGS = ['environment', 'medicalEvent', 'complication'];
+  const VISUAL_EXT = /\.(mp4|webm|mov|m4v|ogv|jpg|jpeg|png|gif|webp|svg|avif)$/i;
+
+  const tagsOf = a => (a && a.tags) || {};
+  const allows = (list, picked) => !list || list.length === 0 || list.includes(picked);
+  const hits = (list, picks) => (list || []).some(v => picks.includes(v));
+
+  function specificity(asset) {
+    return SPECIFICITY_TAGS.reduce((n, dim) => n + ((tagsOf(asset)[dim] || []).length ? 1 : 0), 0);
+  }
+
+  // 素材沒寫 segment 就是第 1 段——多數素材都沒寫，回傳 undefined 會讓它們
+  // 在依片段篩選時整批消失，而且是靜靜地消失。
+  function segmentOf(asset) {
+    const value = Number(asset && (tagsOf(asset).segment ?? asset.segment));
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
+  }
+
+  function firstFile(asset) {
+    const f = asset && asset.file;
+    const one = Array.isArray(f) ? f[0] : f;
+    return typeof one === 'string' ? one : null;
+  }
+
+  // 病患聲音要跟本次選到的照片性別、年齡層相容；空標籤代表通用
+  function patientCompatible(asset, patientPhoto) {
+    if (!patientPhoto) return true;
+    return ['gender', 'ageGroup'].every(tag => {
+      const cand = tagsOf(asset)[tag] || [];
+      const sel = tagsOf(patientPhoto)[tag] || [];
+      return !cand.length || !sel.length || hits(cand, sel);
+    });
+  }
+
+  /**
+   * 某個 role 在這組條件下「還剩哪些素材可選」（已做完特異性篩選）。
+   * 回傳空陣列＝這格是空的，UI 該把它擋下來或標出來。
+   */
+  function eligibleAssets(assets, role, { env, med, comps = [], patientPhoto = null, segment = null } = {}) {
+    let list = (assets || []).filter(a => a.role === role
+      && (segment === null || String(segmentOf(a)) === String(segment)));
+    list = list.filter(a => allows(tagsOf(a).environment, env) && allows(tagsOf(a).medicalEvent, med));
+    if (role === 'patient_voice') list = list.filter(a => patientCompatible(a, patientPhoto));
+    // 綁定特定突發狀況的素材，只有在該狀況被勾選時才可用
+    list = list.filter(a => {
+      const c = tagsOf(a).complication || [];
+      return !c.length || hits(c, comps);
+    });
+    if (COMPLICATION_ROLES.includes(role)) {
+      list = comps.length ? list.filter(a => hits(tagsOf(a).complication, comps)) : [];
+    }
+    if (!list.length) return [];
+    // 標籤填得越精準的越優先，通用素材只在沒有專屬素材時頂替
+    const best = Math.max(...list.map(specificity));
+    return list.filter(a => specificity(a) === best);
+  }
+
+  // 綠幕人物疊得上去的條件：不是 type:none，而且第一個檔是影片或圖片。
+  // 配音是選配——沒有專屬配音時會用綠幕影片的原聲，那仍然是可用的。
+  function projectableComplication(asset) {
+    if (!asset || asset.type === 'none') return false;
+    const file = firstFile(asset);
+    return !!file && VISUAL_EXT.test(file);
+  }
+
+  function complicationSegments(assets, comp, env, med) {
+    const found = new Set();
+    for (const a of assets || []) {
+      if (!COMPLICATION_ROLES.includes(a.role)) continue;
+      if (!hits(tagsOf(a).complication, [comp])) continue;
+      if (!allows(tagsOf(a).environment, env) || !allows(tagsOf(a).medicalEvent, med)) continue;
+      found.add(segmentOf(a));
+    }
+    return found.size ? [...found].sort((a, b) => a - b) : [1];
+  }
+
+  /**
+   * 這個突發狀況在此環境×急救事件下，到底演不演得出來。
+   * ok=false 代表勾了也不會有任何東西出現——那種選項不該讓人選得到。
+   */
+  function complicationAvailability(assets, comp, env, med) {
+    const segments = complicationSegments(assets, comp, env, med).filter(segment => {
+      const videos = eligibleAssets(assets, 'complication_video',
+        { env, med, comps: [comp], segment });
+      return videos.some(projectableComplication);
+    });
+    return { comp, segments, ok: segments.length > 0 };
+  }
+
+  function availableComplications(assets, options, env, med) {
+    return asArray((options || {}).complication)
+      .map(comp => complicationAvailability(assets, comp, env, med));
+  }
+
+  /** 四個基本角色在這格的狀態：ok＝有素材、none＝刻意留白、missing＝查無 */
+  function baseCoverage(assets, env, med) {
+    const out = {};
+    let photo = null;
+    for (const role of BASE_ROLES) {
+      const list = eligibleAssets(assets, role, { env, med, comps: [], patientPhoto: photo });
+      if (role === 'patient_photo' && list.length) photo = list[0];
+      out[role] = !list.length ? 'missing'
+        : (list.every(a => a.type === 'none') ? 'none' : 'ok');
+    }
+    return out;
+  }
+
+  /** 整張覆蓋表：環境 × 急救事件，供選單標示與素材頁使用 */
+  function coverageMatrix(assets, options) {
+    const sets = optionSets(options);
+    const rows = [];
+    for (const env of sets.environments) {
+      for (const med of sets.medicalEvents) {
+        const base = baseCoverage(assets, env, med);
+        const comps = availableComplications(assets, options, env, med);
+        rows.push({
+          environment: env,
+          medicalEvent: med,
+          base,
+          missing: BASE_ROLES.filter(r => base[r] === 'missing'),
+          complications: comps.filter(c => c.ok).map(c => c.comp),
+        });
+      }
+    }
+    return rows;
+  }
+
   return {
     ACTION_TYPES,
+    BASE_ROLES,
+    COMPLICATION_ROLES,
     optionSets,
+    specificity,
+    segmentOf,
+    eligibleAssets,
+    projectableComplication,
+    complicationSegments,
+    complicationAvailability,
+    availableComplications,
+    baseCoverage,
+    coverageMatrix,
     complicationsOf,
     playableSlides,
     normalizeScenarios,

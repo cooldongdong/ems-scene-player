@@ -249,6 +249,111 @@ test('匯入的檔案裡有壞資料時，好的留下、壞的被跳過並警�
   assert.equal(back.warnings.length, 1);
 });
 
+// ---------- 素材比對與把關 ----------
+
+test('沒寫 segment 的素材算第 1 段（多數素材都沒寫，回傳 undefined 會讓它們整批消失）', () => {
+  assert.equal(S.segmentOf({ id: 'x' }), 1);
+  assert.equal(S.segmentOf({ id: 'x', segment: 2 }), 2);
+  assert.equal(S.segmentOf({ id: 'x', segment: '3' }), 3);
+  assert.equal(S.segmentOf({ id: 'x', tags: { segment: 2 } }), 2);
+  assert.equal(S.segmentOf({ id: 'x', segment: 0 }), 1);
+  assert.equal(S.segmentOf({ id: 'x', segment: 'abc' }), 1);
+});
+
+test('特異性：標了範圍的維度越多分數越高，gender／ageGroup 不算', () => {
+  assert.equal(S.specificity({ tags: {} }), 0);
+  assert.equal(S.specificity({ tags: { environment: ['工地'] } }), 1);
+  assert.equal(S.specificity({ tags: { environment: ['工地'], medicalEvent: ['外傷出血'] } }), 2);
+  assert.equal(S.specificity({ tags: { environment: ['工地'], gender: ['male'], ageGroup: ['adult'] } }), 1);
+});
+
+test('專屬素材會贏過通用素材（市區街道＋車禍的路口照贏過任何路邊都能用的騎樓照）', () => {
+  const picked = S.eligibleAssets(DATA.assets, 'environment_video',
+    { env: '市區街道', med: '車禍多重傷' });
+  assert.deepEqual(picked.map(a => a.id), ['ev004']);
+});
+
+test('沒勾突發狀況時，突發狀況素材一律不出現（不用通用素材頂替）', () => {
+  assert.deepEqual(S.eligibleAssets(DATA.assets, 'complication_video',
+    { env: '市區街道', med: '車禍多重傷', comps: [] }), []);
+});
+
+test('每個環境×急救事件實際可用的突發狀況數，與素材庫相符', () => {
+  const 期望 = {
+    '住宅客廳': [1, 1, 1, 1, 1, 2],
+    '出租套房': [1, 1, 1, 1, 1, 2],
+    'KTV 包廂': [1, 3, 1, 2, 3, 1],
+    '市區街道': [2, 4, 2, 3, 3, 1],
+    '工地': [1, 2, 1, 1, 1, 0],
+  };
+  for (const [env, counts] of Object.entries(期望)) {
+    OPTIONS.medicalEvent.forEach((med, i) => {
+      const n = S.availableComplications(DATA.assets, OPTIONS, env, med).filter(c => c.ok).length;
+      assert.equal(n, counts[i], `${env}／${med} 應為 ${counts[i]} 個，實得 ${n}`);
+    });
+  }
+});
+
+test('工地＋自傷（割腕）一個突發狀況都沒有——六個都勾也不會有東西', () => {
+  const usable = S.availableComplications(DATA.assets, OPTIONS, '工地', '自傷（割腕）')
+    .filter(c => c.ok);
+  assert.deepEqual(usable, []);
+});
+
+test('多片段的突發狀況會回報所有片段', () => {
+  const a = S.complicationAvailability(DATA.assets, '肇事雙方爭吵', '市區街道', '車禍多重傷');
+  assert.equal(a.ok, true);
+  assert.deepEqual(a.segments, [1, 2, 3]);
+});
+
+test('沒有專屬配音不影響可用性（沒配音時會用綠幕影片的原聲）', () => {
+  // 肇事雙方爭吵的第 2、3 段沒有專屬 complication_voice，但仍要算可用
+  const voice2 = S.eligibleAssets(DATA.assets, 'complication_voice',
+    { env: '市區街道', med: '車禍多重傷', comps: ['肇事雙方爭吵'], segment: 2 });
+  assert.equal(voice2.length, 0, '前提：第 2 段確實沒有專屬配音');
+  const a = S.complicationAvailability(DATA.assets, '肇事雙方爭吵', '市區街道', '車禍多重傷');
+  assert.ok(a.segments.includes(2), '沒配音的片段仍應算可用');
+});
+
+test('基本四角色覆蓋：刻意留白（type: none）不算缺', () => {
+  // 住宅客廳的環境聲音是 as003，type: none，那是資料作者的決定不是漏洞
+  const home = S.baseCoverage(DATA.assets, '住宅客廳', '心跳停止（OHCA）');
+  assert.equal(home.ambient_sound, 'none');
+  assert.equal(home.environment_video, 'ok');
+  assert.equal(home.patient_photo, 'ok');
+});
+
+test('基本四角色覆蓋：KTV 沒有環境影像、住宅客廳＋外傷沒有病患照片', () => {
+  assert.equal(S.baseCoverage(DATA.assets, 'KTV 包廂', '酒醉意識不清').environment_video, 'missing');
+  assert.equal(S.baseCoverage(DATA.assets, '住宅客廳', '外傷出血').patient_photo, 'missing');
+});
+
+test('覆蓋表：30 格中四項基本素材齊全的剛好 7 格', () => {
+  const rows = S.coverageMatrix(DATA.assets, OPTIONS);
+  assert.equal(rows.length, 30);
+  const full = rows.filter(r => !r.missing.length);
+  assert.equal(full.length, 7);
+  assert.deepEqual(full.map(r => `${r.environment}／${r.medicalEvent}`), [
+    '住宅客廳／心跳停止（OHCA）',
+    '出租套房／自傷（割腕）',
+    '市區街道／外傷出血',
+    '市區街道／骨折（墜落）',
+    '市區街道／車禍多重傷',
+    '工地／外傷出血',
+    '工地／骨折（墜落）',
+  ]);
+});
+
+test('內建 7 組情境用到的突發狀況，在各自的環境×事件下全部可用', () => {
+  const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  for (const s of scenarios) {
+    for (const comp of S.complicationsOf(s)) {
+      const a = S.complicationAvailability(DATA.assets, comp, s.environment, s.medicalEvent);
+      assert.equal(a.ok, true, `${s.name} 的「${comp}」在 ${s.environment}／${s.medicalEvent} 沒有素材`);
+    }
+  }
+});
+
 // ---------- preset 遷移函式 ----------
 
 test('fromPreset 轉出的情境，推導出的突發狀況與原 preset 相同', () => {
