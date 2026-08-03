@@ -94,6 +94,36 @@
   .flow-row-meta { flex: none; font-size: 12px; color: var(--muted); }
   .flow-toggle { display: inline-flex; align-items: center; flex: none; }
   .flow-toggle input { margin: 0; accent-color: var(--accent); }
+  /* 自訂／改過的情境要一眼認得出來，否則不知道哪些是自己的 */
+  .preset-list button.custom { border-style: dashed; }
+  .flow-btn-mini { font-size: 12px; padding: 4px 10px; }
+  .flow-actions-tight { margin: -2px 0 4px; padding-left: 12px; }
+  .flow-row.dragging { opacity: .4; }
+  .flow-row[draggable="true"] { cursor: grab; }
+
+  /* 編輯頁 */
+  .edit-field { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .edit-field input {
+    flex: 1 1 auto; padding: 8px 10px; font: inherit; font-size: 14px;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  .edit-action {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
+    padding: 9px 11px; border-radius: 8px;
+    background: var(--panel-2); border: 1px solid var(--line);
+  }
+  .edit-action select, .edit-action input {
+    padding: 7px 9px; font: inherit; font-size: 13px;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--line); border-radius: 7px;
+  }
+  .edit-action select { width: auto; flex: none; }
+  .edit-action input { flex: 1 1 140px; min-width: 100px; }
+  .edit-action input.edit-seg { flex: 0 1 130px; }
+  .edit-tools { display: flex; gap: 4px; margin-left: auto; flex: none; }
+  .edit-tools .flow-btn { font-size: 13px; padding: 5px 9px; }
+  .edit-danger { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 
   .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 20px; }
   button {
@@ -334,7 +364,8 @@ const patientOverlayBoxes = [];        // { sync, enabled }
 // 檢視層級也共用：教官在主視窗鑽進某個情境後，打開投影側邊欄應該看到同一個地方。
 let currentScenario = null;
 let flowIndex = -1;                    // 指向「會播的頁」的 index；-1 = 尚未開始
-let sidebarLevel = 'scenarios';        // 'scenarios' | 'slides'
+let sidebarLevel = 'scenarios';        // 'scenarios' | 'slides' | 'edit'
+let editingSlideId = null;             // 'edit' 層正在編哪一頁
 // 片段 key -> 播放函式，由 segmentActions 登記，generate() 時清空
 const segmentPlayers = new Map();
 
@@ -595,9 +626,11 @@ function buildScenarios() {
       ].filter(Boolean).join('\n'),
     });
     btn.dataset.scenarioId = scenario.id;
+    if (scenario.source !== 'builtin') btn.classList.add('custom');
     btn.addEventListener('click', () => loadScenario(scenario));
     list.appendChild(btn);
   });
+  list.appendChild(buildScenarioTools(document));
 }
 
 // 只設定三個選單，不產生情境。切換某頁啟用時會單獨用到它。
@@ -729,22 +762,236 @@ function stopFlow() {
   renderFlow();
 }
 
+// 任何一種編輯之後都要做的事，集中在這裡——散在各個操作裡遲早會有人漏掉一步
+function persistScenarioEdit() {
+  if (!currentScenario) return;
+  const beforeStep = flowIndex >= 0 ? flowSteps[flowIndex] : null;
+  const beforeComps = selectedComplications().slice().sort().join('|');
+
+  saveScenarioOverride(currentScenario);
+  applyScenarioSelection(currentScenario);   // 勾選是推導出來的，頁一動就要跟著變
+
+  // 突發狀況的集合變了才重新產生素材：generate() 會重抽，編輯中每動一下就重抽很擾人
+  if (selectedComplications().slice().sort().join('|') !== beforeComps) generate();
+
+  buildFlowSteps();
+  // 頁數可能變了，目前這一步未必還存在，收斂回合理範圍
+  const i = beforeStep ? flowSteps.findIndex(s => s.slideId === beforeStep.slideId) : -1;
+  flowIndex = i >= 0 ? i : (flowSteps.length ? Math.min(flowIndex, flowSteps.length - 1) : -1);
+  renderFlow();
+}
+
 // 切換某頁的啟用：這是「現場臨時抽掉一個橋段」，所以要立刻反映在流程與儲存上
 function toggleSlideEnabled(slideId) {
   if (!currentScenario) return;
   const slide = currentScenario.slides.find(s => s.id === slideId);
   if (!slide) return;
   slide.enabled = slide.enabled === false;
-  saveScenarioOverride(currentScenario);
-  // 頁數變了，目前這一步可能已經不存在，收斂回合理範圍
-  const before = flowSteps[flowIndex];
-  buildFlowSteps();
-  flowIndex = before
-    ? Math.min(flowSteps.findIndex(s => s.slideId === before.slideId), flowSteps.length - 1)
-    : -1;
-  if (flowIndex < 0) flowIndex = -1;
-  applyScenarioSelection(currentScenario);   // 勾選是推導出來的，關掉一頁就要跟著變
-  renderFlow();
+  persistScenarioEdit();
+}
+
+// ---------- 編輯：頁 ----------
+
+function nextSlideId(scenario) {
+  let n = scenario.slides.length + 1;
+  while (scenario.slides.some(s => s.id === `s${n}`)) n++;
+  return `s${n}`;
+}
+
+function addSlide() {
+  if (!currentScenario) return;
+  const slide = {
+    id: nextSlideId(currentScenario),
+    title: `第 ${currentScenario.slides.length + 1} 頁`,
+    enabled: true,
+    // 新頁先給一個 wait：沒有動作的頁在資料層會被丟掉，等於按了沒反應
+    actions: [{ type: 'wait', note: '' }],
+  };
+  currentScenario.slides.push(slide);
+  editingSlideId = slide.id;
+  sidebarLevel = 'edit';
+  persistScenarioEdit();
+}
+
+function duplicateSlide(slideId) {
+  if (!currentScenario) return;
+  const i = currentScenario.slides.findIndex(s => s.id === slideId);
+  if (i < 0) return;
+  const copy = JSON.parse(JSON.stringify(currentScenario.slides[i]));
+  copy.id = nextSlideId(currentScenario);
+  copy.title += '（複製）';
+  currentScenario.slides.splice(i + 1, 0, copy);
+  persistScenarioEdit();
+}
+
+function deleteSlide(slideId) {
+  if (!currentScenario) return;
+  if (currentScenario.slides.length <= 1) {
+    setStatus('至少要留一頁——沒有任何頁的情境會被資料層整筆跳過。', true);
+    return;
+  }
+  currentScenario.slides = currentScenario.slides.filter(s => s.id !== slideId);
+  if (editingSlideId === slideId) { editingSlideId = null; sidebarLevel = 'slides'; }
+  persistScenarioEdit();
+}
+
+function moveSlide(slideId, toIndex) {
+  if (!currentScenario) return;
+  const from = currentScenario.slides.findIndex(s => s.id === slideId);
+  if (from < 0) return;
+  const to = Math.max(0, Math.min(toIndex, currentScenario.slides.length - 1));
+  if (from === to) return;
+  const [slide] = currentScenario.slides.splice(from, 1);
+  currentScenario.slides.splice(to, 0, slide);
+  persistScenarioEdit();
+}
+
+// ---------- 編輯：動作 ----------
+
+function editingSlide() {
+  return currentScenario && currentScenario.slides.find(s => s.id === editingSlideId);
+}
+
+function addAction(type) {
+  const slide = editingSlide();
+  if (!slide) return;
+  slide.actions.push(type === 'wait'
+    ? { type: 'wait', note: '' }
+    : { type: 'complication', complication: optionsFor('complication')[0] });
+  persistScenarioEdit();
+}
+
+function removeAction(index) {
+  const slide = editingSlide();
+  if (!slide) return;
+  if (slide.actions.length <= 1) {
+    setStatus('每頁至少要有一個動作——沒有動作的頁會被資料層丟掉。', true);
+    return;
+  }
+  slide.actions.splice(index, 1);
+  persistScenarioEdit();
+}
+
+function moveAction(index, delta) {
+  const slide = editingSlide();
+  if (!slide) return;
+  const to = index + delta;
+  if (to < 0 || to >= slide.actions.length) return;
+  const [a] = slide.actions.splice(index, 1);
+  slide.actions.splice(to, 0, a);
+  persistScenarioEdit();
+}
+
+function updateAction(index, patch) {
+  const slide = editingSlide();
+  if (!slide || !slide.actions[index]) return;
+  const action = slide.actions[index];
+  if (patch.type && patch.type !== action.type) {
+    // 換型別等於換一個動作，殘留的舊欄位會被資料層當成雜訊
+    slide.actions[index] = patch.type === 'wait'
+      ? { type: 'wait', note: '' }
+      : { type: 'complication', complication: optionsFor('complication')[0] };
+  } else {
+    Object.assign(action, patch);
+    if (action.type === 'complication' && !action.segment) delete action.segment;
+    if (action.type === 'wait' && !action.note) delete action.note;
+  }
+  persistScenarioEdit();
+}
+
+// ---------- 編輯：情境 ----------
+
+function nextScenarioId() {
+  let n = 1;
+  while (activeScenarios.some(s => s.id === `custom-${n}`)) n++;
+  return `custom-${n}`;
+}
+
+function newScenario() {
+  const scenario = {
+    id: nextScenarioId(),
+    name: '新情境',
+    environment: $('sel-env').value,
+    medicalEvent: $('sel-med').value,
+    slides: [{ id: 's1', title: '抵達現場', enabled: true, actions: [{ type: 'wait', note: '' }] }],
+  };
+  saveScenarioOverride(scenario);
+  loadScenario(activeScenarios.find(s => s.id === scenario.id) || scenario);
+}
+
+function duplicateScenario(scenario) {
+  const copy = JSON.parse(JSON.stringify(Scenarios.forExport([scenario])[0]));
+  copy.id = nextScenarioId();
+  copy.name = scenario.name + '（複製）';
+  saveScenarioOverride(copy);
+  loadScenario(activeScenarios.find(s => s.id === copy.id) || copy);
+}
+
+// 刪自訂＝真的消失；刪「覆蓋內建的那份」＝還原成內建，不是刪掉內建
+function deleteScenario(scenario) {
+  writeCustomScenarios(
+    Scenarios.normalizeScenarios(
+      readCustomScenarios().filter(s => s.id !== scenario.id), DATA.options).scenarios);
+  buildScenarios();
+  if (currentScenario && currentScenario.id === scenario.id) {
+    const still = activeScenarios.find(s => s.id === scenario.id);
+    if (still) loadScenario(still); else leaveScenario();
+  } else {
+    renderFlow();
+  }
+}
+
+function renameScenario(name) {
+  if (!currentScenario) return;
+  currentScenario.name = name;
+  persistScenarioEdit();
+}
+
+// ---------- 匯出／匯入 ----------
+
+function exportScenarios() {
+  const text = Scenarios.exportYaml(activeScenarios, jsyaml.dump);
+  const blob = new Blob([text], { type: 'text/yaml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'),
+    { href: url, download: 'ems-scenarios.yaml' });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  setStatus(`已匯出 ${activeScenarios.length} 個情境（YAML，可直接貼回 scenario-data.yaml）`);
+}
+
+function importScenarios(text) {
+  const result = Scenarios.parseImport(text, DATA.options, jsyaml.load);
+  result.warnings.forEach(w => console.warn(w));
+  if (!result.ok) {
+    setStatus('匯入失敗：' + result.warnings.join('；'), true);
+    return;
+  }
+  if (!result.scenarios.length) {
+    setStatus('匯入的檔案裡沒有任何有效情境。', true);
+    return;
+  }
+  // 同 id 覆蓋，其餘保留——匯入是「加進來」，不是「取代全部」
+  const kept = readCustomScenarios().filter(s => !result.scenarios.some(n => n.id === s.id));
+  writeCustomScenarios(
+    Scenarios.normalizeScenarios([...kept, ...Scenarios.forExport(result.scenarios)], DATA.options).scenarios);
+  buildScenarios();
+  leaveScenario();
+  const skipped = result.warnings.length ? `，略過 ${result.warnings.length} 筆有問題的資料` : '';
+  setStatus(`已匯入 ${result.scenarios.length} 個情境${skipped}`);
+}
+
+function pickImportFile() {
+  const input = Object.assign(document.createElement('input'),
+    { type: 'file', accept: '.yaml,.yml,.json,text/yaml,application/json' });
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    file.text().then(importScenarios).catch(err => setStatus('讀檔失敗：' + err.message, true));
+  });
+  input.click();
 }
 
 // 改過的情境（含內建）一律以自訂身分存進 localStorage，同 id 覆蓋內建
@@ -1060,6 +1307,35 @@ function projectionMarkup() {
   #projection-sidebar .flow-row-meta { flex: none; font-size: 11px; color: rgba(255,255,255,.55); }
   #projection-sidebar .flow-toggle { display: inline-flex; align-items: center; flex: none; }
   #projection-sidebar .flow-toggle input { margin: 0; accent-color: #ff6b3d; }
+  #projection-sidebar .flow-btn-mini { font-size: 11px; padding: 4px 8px; }
+  #projection-sidebar .flow-actions-tight { margin: -1px 0 3px; padding-left: 10px; }
+  #projection-sidebar .flow-row.dragging { opacity: .4; }
+  #projection-sidebar .flow-row[draggable="true"] { cursor: grab; }
+  #projection-sidebar .edit-field {
+    display: flex; align-items: center; gap: 9px; margin-top: 11px;
+    font-size: 12px; color: rgba(255,255,255,.6);
+  }
+  #projection-sidebar .edit-field input {
+    flex: 1 1 auto; padding: 7px 9px; font: inherit; font-size: 13px;
+    background: rgba(255,255,255,.08); color: #fff;
+    border: 1px solid rgba(255,255,255,.2); border-radius: 7px;
+  }
+  #projection-sidebar .edit-action {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 7px;
+    padding: 8px 10px; border-radius: 8px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16);
+  }
+  #projection-sidebar .edit-action select, #projection-sidebar .edit-action input {
+    padding: 6px 8px; font: inherit; font-size: 12px;
+    background: rgba(20,20,22,.9); color: #fff;
+    border: 1px solid rgba(255,255,255,.22); border-radius: 6px;
+  }
+  #projection-sidebar .edit-action input { flex: 1 1 110px; min-width: 84px; }
+  #projection-sidebar .edit-tools { display: flex; gap: 4px; margin-left: auto; flex: none; }
+  #projection-sidebar .edit-tools .flow-btn { font-size: 12px; padding: 4px 8px; }
+  #projection-sidebar .edit-danger {
+    margin-top: 12px; padding-top: 11px; border-top: 1px solid rgba(255,255,255,.16);
+  }
   /* 以下與主視窗的 .overlay-* 同名同結構，但投影視窗是獨立 document，樣式要各寫一份 */
   #projection-sidebar .overlay-controls {
     padding: 10px 12px; border-radius: 8px;
@@ -1902,8 +2178,32 @@ function buildScenarioList(doc) {
     row.append(name, meta);
     row.addEventListener('click', () => loadScenario(scenario));
     wrap.appendChild(row);
+
+    if (scenario.source !== 'builtin') {
+      const tools = doc.createElement('div');
+      tools.className = 'flow-actions flow-actions-tight';
+      tools.append(
+        flowButton(doc, '複製', () => duplicateScenario(scenario)),
+        // 覆蓋內建的那份刪掉＝還原成內建，不是刪掉內建情境本身
+        flowButton(doc, scenario.source === 'overridden' ? '還原成內建' : '刪除',
+          () => deleteScenario(scenario)),
+      );
+      tools.querySelectorAll('button').forEach(b => b.classList.add('flow-btn-mini'));
+      wrap.appendChild(tools);
+    }
   });
   return wrap;
+}
+
+function buildScenarioTools(doc) {
+  const bar = doc.createElement('div');
+  bar.className = 'flow-actions';
+  bar.append(
+    flowButton(doc, '＋ 新增情境', newScenario, { primary: true }),
+    flowButton(doc, '匯出 YAML', exportScenarios),
+    flowButton(doc, '匯入', pickImportFile),
+  );
+  return bar;
 }
 
 // L2：簡報頁清單 ＋ 播放控制
@@ -1971,12 +2271,42 @@ function buildFlowPanel(doc) {
       ? '播放時跳過'
       : (steps.length > 1 ? `${steps.length} 段` : (slide.actions[0].type === 'wait' ? '等教官' : ''));
 
-    row.append(toggle, name, meta);
-    // 唯讀階段：點整列＝跳到那一頁的第一步（編輯留給第三刀）
+    const edit = flowButton(doc, '編輯', () => {
+      editingSlideId = slide.id;
+      sidebarLevel = 'edit';
+      renderFlow();
+    });
+    edit.classList.add('flow-btn-mini');
+
+    row.append(toggle, name, meta, edit);
+
+    // 拖曳排序：把手就是整列，放開時看落在哪一列的上／下半決定插入位置
+    row.draggable = true;
+    row.dataset.slideId = slide.id;
+    row.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', slide.id);
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', () => row.classList.remove('dragging'));
+    row.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    row.addEventListener('drop', e => {
+      e.preventDefault();
+      const draggedId = e.dataTransfer.getData('text/plain');
+      if (!draggedId || draggedId === slide.id) return;
+      const target = currentScenario.slides.findIndex(s => s.id === slide.id);
+      const from = currentScenario.slides.findIndex(s => s.id === draggedId);
+      const rect = row.getBoundingClientRect();
+      const after = (e.clientY - rect.top) > rect.height / 2;
+      let to = target + (after ? 1 : 0);
+      if (from < to) to -= 1;      // 往下搬時，自己被抽走會讓後面的索引往前一格
+      moveSlide(draggedId, to);
+    });
+
     if (slide.enabled !== false) {
       row.classList.add('clickable');
       row.addEventListener('click', e => {
-        if (e.target.closest('.flow-toggle')) return;
+        if (e.target.closest('.flow-toggle') || e.target.closest('button')) return;
         const i = flowSteps.findIndex(s => s.slideId === slide.id);
         if (i >= 0) gotoFlow(i);
       });
@@ -1984,12 +2314,120 @@ function buildFlowPanel(doc) {
     list.appendChild(row);
   });
   wrap.appendChild(list);
+
+  const editBar = doc.createElement('div');
+  editBar.className = 'flow-actions';
+  editBar.append(
+    flowButton(doc, '＋ 新增頁', addSlide),
+    flowButton(doc, '重新命名', () => {
+      const name = doc.defaultView.prompt('情境名稱', currentScenario.name);
+      if (name && name.trim()) renameScenario(name.trim());
+    }),
+  );
+  wrap.appendChild(editBar);
+  return wrap;
+}
+
+// L3：編輯單一簡報頁
+function buildSlideEditor(doc) {
+  const wrap = doc.createElement('div');
+  wrap.className = 'flow-panel';
+  const slide = editingSlide();
+  if (!slide) return wrap;
+
+  const head = doc.createElement('div');
+  head.className = 'flow-head';
+  head.append(
+    flowButton(doc, '‹ 頁清單', () => { sidebarLevel = 'slides'; editingSlideId = null; renderFlow(); }),
+    Object.assign(doc.createElement('span'), { className: 'flow-title', textContent: '編輯頁' }),
+  );
+  wrap.appendChild(head);
+
+  const titleRow = doc.createElement('label');
+  titleRow.className = 'edit-field';
+  titleRow.append(Object.assign(doc.createElement('span'), { textContent: '標題' }));
+  const titleInput = Object.assign(doc.createElement('input'), { type: 'text', value: slide.title });
+  // input 事件每打一個字就存一次會太吵，改成離開欄位時才寫入
+  titleInput.addEventListener('change', () => {
+    slide.title = titleInput.value.trim() || slide.title;
+    persistScenarioEdit();
+  });
+  titleRow.appendChild(titleInput);
+  wrap.appendChild(titleRow);
+
+  const actionsTitle = doc.createElement('div');
+  actionsTitle.className = 'sidebar-section-title';
+  actionsTitle.textContent = '這一頁會發生的事';
+  wrap.appendChild(actionsTitle);
+
+  slide.actions.forEach((action, i) => {
+    const row = doc.createElement('div');
+    row.className = 'edit-action';
+
+    const typeSel = doc.createElement('select');
+    [['wait', '停住等教官'], ['complication', '播突發狀況']].forEach(([v, label]) => {
+      typeSel.appendChild(Object.assign(doc.createElement('option'), { value: v, textContent: label }));
+    });
+    typeSel.value = action.type;
+    typeSel.addEventListener('change', () => updateAction(i, { type: typeSel.value }));
+    row.appendChild(typeSel);
+
+    if (action.type === 'wait') {
+      const note = Object.assign(doc.createElement('input'),
+        { type: 'text', placeholder: '提示教官要說什麼（可留空）', value: action.note || '' });
+      note.addEventListener('change', () => updateAction(i, { note: note.value.trim() }));
+      row.appendChild(note);
+    } else {
+      const compSel = doc.createElement('select');
+      optionsFor('complication').forEach(c => {
+        compSel.appendChild(Object.assign(doc.createElement('option'), { value: c, textContent: c }));
+      });
+      compSel.value = action.complication;
+      compSel.addEventListener('change', () => updateAction(i, { complication: compSel.value }));
+      row.appendChild(compSel);
+
+      const seg = Object.assign(doc.createElement('input'),
+        { type: 'text', className: 'edit-seg', placeholder: '片段（留空＝全部）', value: action.segment || '' });
+      seg.addEventListener('change', () => updateAction(i, { segment: seg.value.trim() }));
+      row.appendChild(seg);
+    }
+
+    const tools = doc.createElement('span');
+    tools.className = 'edit-tools';
+    tools.append(
+      flowButton(doc, '↑', () => moveAction(i, -1), { disabled: i === 0 }),
+      flowButton(doc, '↓', () => moveAction(i, 1), { disabled: i === slide.actions.length - 1 }),
+      flowButton(doc, '✕', () => removeAction(i)),
+    );
+    row.appendChild(tools);
+    wrap.appendChild(row);
+  });
+
+  const addBar = doc.createElement('div');
+  addBar.className = 'flow-actions';
+  addBar.append(
+    flowButton(doc, '＋ 停住等教官', () => addAction('wait')),
+    flowButton(doc, '＋ 突發狀況', () => addAction('complication')),
+  );
+  wrap.appendChild(addBar);
+
+  const slideBar = doc.createElement('div');
+  slideBar.className = 'flow-actions edit-danger';
+  slideBar.append(
+    flowButton(doc, '複製這頁', () => duplicateSlide(slide.id)),
+    flowButton(doc, '刪除這頁', () => deleteSlide(slide.id)),
+  );
+  wrap.appendChild(slideBar);
   return wrap;
 }
 
 function renderFlow() {
   const box = $('flow');
-  box.replaceChildren(currentScenario ? buildFlowPanel(document) : document.createElement('div'));
+  let node;
+  if (!currentScenario) node = document.createElement('div');
+  else if (sidebarLevel === 'edit' && editingSlide()) node = buildSlideEditor(document);
+  else node = buildFlowPanel(document);
+  box.replaceChildren(node);
   box.hidden = !currentScenario;
   renderProjectionSidebar();
 }
@@ -2026,10 +2464,14 @@ function renderProjectionSidebar() {
   box.innerHTML = '';
 
   // 流程在最上面：訓練進行中最常看的是「現在第幾步」，版面滑桿是偶爾才調的
-  if (sidebarLevel === 'slides' && currentScenario) {
+  if (currentScenario && sidebarLevel === 'edit' && editingSlide()) {
+    box.appendChild(buildSlideEditor(doc));
+  } else if (currentScenario && sidebarLevel === 'slides') {
     box.appendChild(buildFlowPanel(doc));
   } else {
-    box.appendChild(sidebarSection(doc, '情境', buildScenarioList(doc)));
+    const section = sidebarSection(doc, '情境', buildScenarioList(doc));
+    section.appendChild(buildScenarioTools(doc));
+    box.appendChild(section);
   }
 
   let patientNode;
