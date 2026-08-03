@@ -289,6 +289,9 @@ const PATIENT_OVERLAY_SLIDERS = [
   { key: 'x',    label: '水平', min: 0,  max: 100 },
   { key: 'y',    label: '垂直', min: 0,  max: 100 },
 ];
+// 同一份 patientOverlay 會同時顯示在主視窗的卡片與投影視窗的側邊欄，
+// 任一邊動了都要把另一邊的滑桿推到同一個值——比照下面綠幕的 complicationOverlayBoxes。
+const patientOverlayBoxes = [];        // { sync, enabled }
 
 // 綠幕疊加：每個突發狀況各自記版面與去背容差，重新產生情境後沿用
 const COMP_OVERLAY_DEFAULTS = { size: 70, x: 50, y: 55, tolerance: 40 };
@@ -372,6 +375,14 @@ function loadOverlayLayouts(envAssetId) {
 
 function syncComplicationOverlayBoxes(comp) {
   complicationOverlayBoxes.forEach(box => { if (box.comp === comp) box.sync(); });
+}
+
+// 主視窗卡片與投影側邊欄各註冊一份，滑桿與「疊加」開關兩者都要同步
+function syncPatientOverlayBoxes() {
+  patientOverlayBoxes.forEach(box => {
+    box.sync();
+    if (box.enabled) box.enabled.checked = patientOverlay.enabled;
+  });
 }
 
 // 素材沒寫 segment 就是第 1 段；現有只有一段的資料完全不用改
@@ -794,6 +805,74 @@ function projectionMarkup() {
   }
   #projection-fullscreen:focus-visible { outline: 3px solid #ff6b3d; outline-offset: 2px; }
   @media (max-width: 640px) { #projection-hint { display: none; } }
+
+  /* ---------- 版面側邊欄 ----------
+     單機投影時主視窗被全螢幕蓋住，滑桿看得到畫面卻看不到自己，等於盲調。
+     所以控制項要有一份長在投影視窗裡；收起時整條滑出畫面，不留邊。 */
+  #projection-sidebar {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 5;
+    width: min(340px, 86vw);
+    display: flex; flex-direction: column; gap: 14px;
+    padding: 18px 16px; overflow-y: auto;
+    background: rgba(12,12,14,.94);
+    border-left: 1px solid rgba(255,255,255,.18);
+    transform: translateX(100%);
+    transition: transform .22s ease;
+    font-size: 14px;
+  }
+  body.sidebar-open #projection-sidebar { transform: translateX(0); }
+  /* 把手就住在既有的控制列裡：同一個 flex row，兩顆按鈕不可能疊在一起，
+     淡入淡出也自動跟著 #projection-controls 走，不用另寫一套。 */
+  #projection-sidebar-toggle {
+    padding: 8px 14px; border: 1px solid rgba(255,255,255,.55);
+    border-radius: 7px; background: rgba(255,255,255,.12); color: #fff;
+    font: 700 14px/1.2 inherit; cursor: pointer; white-space: nowrap;
+  }
+  #projection-sidebar-toggle:hover { border-color: #ff6b3d; }
+  #projection-sidebar-toggle:focus-visible { outline: 3px solid #ff6b3d; outline-offset: 2px; }
+  /* 側邊欄開著時整條控制列讓到它左邊，否則會被蓋住 */
+  #projection-controls { transition: opacity .2s ease, right .22s ease; }
+  body.sidebar-open #projection-controls { right: calc(min(340px, 86vw) + 14px); opacity: 1; }
+  /* 「把視窗移到投影螢幕」是開場才需要的提示；正在調版面時它只是佔掉寬度 */
+  body.sidebar-open #projection-hint { display: none; }
+
+  .sidebar-section-title {
+    font-size: 12px; letter-spacing: .5px; color: rgba(255,255,255,.6);
+    margin-bottom: 7px;
+  }
+  #projection-sidebar .sidebar-empty {
+    font-size: 13px; line-height: 1.6; color: rgba(255,255,255,.55);
+  }
+  /* 以下與主視窗的 .overlay-* 同名同結構，但投影視窗是獨立 document，樣式要各寫一份 */
+  #projection-sidebar .overlay-controls {
+    padding: 10px 12px; border-radius: 8px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16);
+    display: grid; gap: 9px;
+  }
+  #projection-sidebar .overlay-controls:has(input[type="checkbox"]:checked) { border-color: #ff6b3d; }
+  #projection-sidebar .overlay-toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+  #projection-sidebar .overlay-toggle input { margin: 0; accent-color: #ff6b3d; }
+  #projection-sidebar .overlay-sliders { display: grid; gap: 8px; }
+  #projection-sidebar .overlay-slider {
+    display: grid; grid-template-columns: 32px 1fr 40px; align-items: center;
+    gap: 9px; font-size: 12px; color: rgba(255,255,255,.7);
+  }
+  #projection-sidebar .overlay-slider input { width: 100%; margin: 0; accent-color: #ff6b3d; }
+  #projection-sidebar .overlay-slider output { text-align: right; font-family: ui-monospace, monospace; }
+  #projection-sidebar .overlay-foot {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  #projection-sidebar .overlay-hint {
+    font-size: 11px; line-height: 1.5; color: rgba(255,255,255,.5); flex: 1 1 120px;
+  }
+  #projection-sidebar .overlay-buttons { display: flex; gap: 8px; flex: none; }
+  #projection-sidebar button.reset {
+    font: 500 13px/1.2 inherit; padding: 6px 12px; white-space: nowrap; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.35); border-radius: 7px;
+    background: rgba(255,255,255,.1); color: #fff;
+  }
+  #projection-sidebar button.reset:hover { border-color: #ff6b3d; }
+  #projection-sidebar button.reset:focus-visible { outline: 3px solid #ff6b3d; outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -803,8 +882,10 @@ function projectionMarkup() {
   <div id="projection-message" role="status"></div>
   <div id="projection-controls">
     <span id="projection-hint">將視窗移至投影螢幕後，可進入全螢幕</span>
+    <button id="projection-sidebar-toggle" type="button" aria-expanded="false" aria-controls="projection-sidebar">調整版面</button>
     <button id="projection-fullscreen" type="button">進入全螢幕</button>
   </div>
+  <aside id="projection-sidebar" aria-label="版面調整"></aside>
 </body>
 </html>`;
 }
@@ -851,6 +932,15 @@ function setupProjectionWindow(win) {
       win.setTimeout(() => { hint.textContent = defaultHint; }, 3500);
     }
   });
+  const sidebarToggle = doc.getElementById('projection-sidebar-toggle');
+  sidebarToggle.addEventListener('click', () => {
+    const open = doc.body.classList.toggle('sidebar-open');
+    sidebarToggle.setAttribute('aria-expanded', String(open));
+    sidebarToggle.textContent = open ? '收起版面' : '調整版面';
+    revealControls();
+  });
+  renderProjectionSidebar();
+
   doc.addEventListener('pointermove', revealControls);
   doc.addEventListener('keydown', revealControls);
   doc.addEventListener('click', () => {
@@ -1011,6 +1101,7 @@ function stopComplicationProjection() {
     layer.replaceChildren();
   }
   refreshComplicationPreviewButtons();
+  renderProjectionSidebar();   // 綠幕收掉了，側邊欄要換回「目前沒有綠幕人物」
 }
 
 // 綠幕素材可以是影片，也可以是一張綠幕劇照
@@ -1038,6 +1129,8 @@ function startComplicationProjection(comp, segment, mode) {
   activeComplication = comp;
   activeSegment = segment;
   complicationPreviewing = mode === 'preview';
+  // 上面的 stopComplicationProjection() 已經把側邊欄畫成「沒有綠幕」，這裡要再畫一次成新的這組
+  renderProjectionSidebar();
 
   const layer = doc.getElementById('projection-complication-layer');
   const canvas = doc.createElement('canvas');
@@ -1387,21 +1480,23 @@ function ttsBlock(tts) {
 
 // 疊加開關與大小／位置滑桿，掛在病患照片卡內；設定值存在 patientOverlay，重新產生後沿用
 // 病患照片與綠幕人物共用的滑桿列；sync() 讓「重設版面」能把滑桿一起拉回去
-function overlaySliderRows(state, specs, ariaPrefix, onChange) {
-  const wrap = document.createElement('div');
+// doc 預設是主視窗，投影視窗的側邊欄會傳它自己的 document 進來——
+// 跨 document 的節點不能直接 append（要先 importNode），從源頭建對比較不會出錯。
+function overlaySliderRows(state, specs, ariaPrefix, onChange, doc = document) {
+  const wrap = doc.createElement('div');
   wrap.className = 'overlay-sliders';
   const rows = {};
   const text = ({ key, unit }) => state[key] + (unit === undefined ? '%' : unit);
   for (const spec of specs) {
     const { key, label, min, max } = spec;
-    const row = document.createElement('div');
+    const row = doc.createElement('div');
     row.className = 'overlay-slider';
-    const name = document.createElement('span');
+    const name = doc.createElement('span');
     name.textContent = label;
-    const input = Object.assign(document.createElement('input'),
+    const input = Object.assign(doc.createElement('input'),
       { type: 'range', min, max, step: 1, value: state[key] });
     input.setAttribute('aria-label', ariaPrefix + label);
-    const value = document.createElement('output');
+    const value = doc.createElement('output');
     value.textContent = text(spec);
     input.addEventListener('input', () => {
       state[key] = Number(input.value);
@@ -1423,13 +1518,13 @@ function overlaySliderRows(state, specs, ariaPrefix, onChange) {
   };
 }
 
-function overlayFoot(hintText, reset, extraButton) {
-  const foot = document.createElement('div');
+function overlayFoot(hintText, reset, extraButton, doc = document) {
+  const foot = doc.createElement('div');
   foot.className = 'overlay-foot';
-  const hint = document.createElement('span');
+  const hint = doc.createElement('span');
   hint.className = 'overlay-hint';
   hint.textContent = hintText;
-  const buttons = document.createElement('span');
+  const buttons = doc.createElement('span');
   buttons.className = 'overlay-buttons';
   if (extraButton) buttons.appendChild(extraButton);
   buttons.appendChild(reset);
@@ -1437,36 +1532,38 @@ function overlayFoot(hintText, reset, extraButton) {
   return foot;
 }
 
-function patientOverlayControls() {
-  const box = document.createElement('div');
+function patientOverlayControls(doc = document, hintText = '調整會即時反映在投影視窗，並依目前環境素材記住') {
+  const box = doc.createElement('div');
   box.className = 'overlay-controls';
 
-  const toggle = document.createElement('label');
+  const toggle = doc.createElement('label');
   toggle.className = 'overlay-toggle';
-  const checkbox = Object.assign(document.createElement('input'),
+  const checkbox = Object.assign(doc.createElement('input'),
     { type: 'checkbox', checked: patientOverlay.enabled });
   checkbox.addEventListener('change', () => {
     patientOverlay.enabled = checkbox.checked;
     renderProjectionPatient();
+    syncPatientOverlayBoxes();
   });
-  toggle.append(checkbox, document.createTextNode('疊加到投影視窗'));
+  toggle.append(checkbox, doc.createTextNode('疊加到投影視窗'));
   box.appendChild(toggle);
 
   const applyChange = () => {
     applyPatientOverlayLayout();
+    syncPatientOverlayBoxes();
     saveOverlayLayouts();
   };
-  const sliders = overlaySliderRows(patientOverlay, PATIENT_OVERLAY_SLIDERS, '病患照片', applyChange);
+  const sliders = overlaySliderRows(patientOverlay, PATIENT_OVERLAY_SLIDERS, '病患照片', applyChange, doc);
   box.appendChild(sliders.node);
+  patientOverlayBoxes.push({ sync: sliders.sync, enabled: checkbox });
 
-  const reset = Object.assign(document.createElement('button'),
+  const reset = Object.assign(doc.createElement('button'),
     { className: 'reset', type: 'button', textContent: '重設版面' });
   reset.addEventListener('click', () => {
     Object.assign(patientOverlay, PATIENT_OVERLAY_DEFAULTS);
-    sliders.sync();
     applyChange();
   });
-  box.appendChild(overlayFoot('調整會即時反映在投影視窗，並依目前環境素材記住', reset));
+  box.appendChild(overlayFoot(hintText, reset, null, doc));
   return box;
 }
 
@@ -1524,6 +1621,81 @@ function complicationOverlayControls(comp, segment, playLabel, shared) {
 }
 
 // 一張角色卡；emptyText 是查無素材時要說的話
+// ---------- 投影視窗側邊欄 ----------
+// 側邊欄註冊進來的滑桿會標 sidebar:true，重建時只清掉自己那幾份，
+// 主視窗卡片上的那份不能動——它們的生命週期跟著 generate()，不跟著側邊欄。
+
+function sidebarComplicationControls(comp, doc) {
+  const layout = complicationOverlay(comp);
+  const box = doc.createElement('div');
+  box.className = 'overlay-controls';
+  const applyChange = () => {
+    applyComplicationOverlayLayout();
+    if (chromaRedraw && !chromaFrame) chromaRedraw();   // 暫停的畫面要自己重畫一幀
+    syncComplicationOverlayBoxes(comp);
+    saveOverlayLayouts();
+  };
+  const sliders = overlaySliderRows(layout, COMP_OVERLAY_SLIDERS, `${comp}綠幕`, applyChange, doc);
+  box.appendChild(sliders.node);
+  complicationOverlayBoxes.push({ comp, sync: sliders.sync, sidebar: true });
+
+  const reset = Object.assign(doc.createElement('button'),
+    { className: 'reset', type: 'button', textContent: '重設版面' });
+  reset.addEventListener('click', () => {
+    Object.assign(layout, COMP_OVERLAY_DEFAULTS);
+    applyChange();
+  });
+  box.appendChild(overlayFoot('版面本組各片段共用，依目前環境素材記住', reset, null, doc));
+  return box;
+}
+
+function sidebarSection(doc, title, node) {
+  const wrap = doc.createElement('section');
+  const heading = doc.createElement('div');
+  heading.className = 'sidebar-section-title';
+  heading.textContent = title;
+  wrap.append(heading, node);
+  return wrap;
+}
+
+function sidebarEmpty(doc, text) {
+  const p = doc.createElement('p');
+  p.className = 'sidebar-empty';
+  p.textContent = text;
+  return p;
+}
+
+function renderProjectionSidebar() {
+  if (!projectionWindow || projectionWindow.closed) return;
+  const doc = projectionWindow.document;
+  const box = doc.getElementById('projection-sidebar');
+  if (!box) return;
+
+  // 舊的 sync 會指向已經卸下的節點，重建前一定要先拔掉，否則同步時會寫進孤兒 DOM
+  for (let i = complicationOverlayBoxes.length - 1; i >= 0; i--) {
+    if (complicationOverlayBoxes[i].sidebar) complicationOverlayBoxes.splice(i, 1);
+  }
+  for (let i = patientOverlayBoxes.length - 1; i >= 0; i--) {
+    if (patientOverlayBoxes[i].sidebar) patientOverlayBoxes.splice(i, 1);
+  }
+  box.innerHTML = '';
+
+  let patientNode;
+  if (hasProjectablePatientPhoto(currentPatientPhotoAsset)) {
+    patientNode = patientOverlayControls(doc, '依目前環境素材記住');
+    patientOverlayBoxes[patientOverlayBoxes.length - 1].sidebar = true;
+  } else {
+    patientNode = sidebarEmpty(doc, '這個情境沒有可疊加的病患照片。');
+  }
+  box.appendChild(sidebarSection(doc, '病患照片', patientNode));
+
+  // 只顯示目前投影中的那一段：你看到的人物就是滑桿控制的人物，不會調錯組
+  const compNode = activeComplication
+    ? sidebarComplicationControls(activeComplication, doc)
+    : sidebarEmpty(doc, '目前沒有綠幕人物在投影上。按主視窗某一組的「預覽定位」或「播放這組」，這裡就會出現該組的滑桿。');
+  box.appendChild(sidebarSection(doc, activeComplication ? `綠幕人物：${activeComplication}` : '綠幕人物', compNode));
+}
+
 function buildCard({ role, label, result, changed, emptyText, extras, silentVoice }) {
   const card = document.createElement('div');
   card.className = 'card' + (result ? '' : ' empty') + (changed ? ' changed' : '');
@@ -1681,6 +1853,7 @@ function generate() {
   cards.innerHTML = '';
   groups.innerHTML = '';
   complicationOverlayBoxes.length = 0;
+  patientOverlayBoxes.length = 0;
   currentEnvironmentAsset = null;
   currentPatientPhotoAsset = null;
   Object.keys(complicationVideoAssets).forEach(key => delete complicationVideoAssets[key]);
@@ -1757,6 +1930,7 @@ function generate() {
   updatePlaybackButtons();
   updateProjectionButton();
   renderProjectionScene();
+  renderProjectionSidebar();   // 病患照片換了，側邊欄那份滑桿也要跟著換
   const summary = comps.map(comp => {
     const count = complicationSegments(comp, env, med).length;
     return count > 1 ? `${comp}（${count} 段）` : comp;
