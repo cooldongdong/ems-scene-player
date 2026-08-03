@@ -59,8 +59,41 @@
   .preset-list button {
     border-radius: 999px; padding: 6px 14px; font-size: 14px;
   }
-  /* 目前三個選單剛好等於某個 preset 時亮起來，讓人知道自己在哪一組 */
+  /* 目前三個選單剛好等於某個情境時亮起來，讓人知道自己在哪一組 */
   .preset-list button.active { border-color: var(--accent); background: var(--accent-dim); }
+
+  /* ---------- 流程 ----------
+     與投影側邊欄共用同一個 builder，所以 class 名稱兩邊一致；
+     投影視窗是獨立 document，那邊的樣式另外寫一份（見 projectionMarkup）。 */
+  .flow { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .flow-title { font-size: 16px; font-weight: 700; }
+  .flow-counter { font-size: 13px; color: var(--muted); margin-left: auto; }
+  .flow-now {
+    margin: 10px 0 0; padding: 10px 12px; border-radius: 8px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    font-size: 15px; line-height: 1.5;
+  }
+  .flow-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .flow-btn { font-size: 14px; padding: 8px 16px; }
+  .flow-btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1005; font-weight: 700; }
+  .flow-list { display: grid; gap: 6px; margin-top: 12px; }
+  .flow-row {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    padding: 9px 12px; border-radius: 8px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--text); font-family: inherit; font-size: 14px;
+  }
+  .flow-row.clickable { cursor: pointer; }
+  .flow-row.clickable:hover { border-color: var(--accent); }
+  /* 目前播到的那一頁；訓練進行中這是唯一要一眼看到的資訊 */
+  .flow-row.current { border-color: var(--accent); background: var(--accent-dim); }
+  /* 關掉的頁留在清單裡（是跳過，不是刪除），但要一眼看得出它不會播 */
+  .flow-row.off .flow-row-title { text-decoration: line-through; opacity: .55; }
+  .flow-row-title { flex: 1 1 auto; }
+  .flow-row-meta { flex: none; font-size: 12px; color: var(--muted); }
+  .flow-toggle { display: inline-flex; align-items: center; flex: none; }
+  .flow-toggle input { margin: 0; accent-color: var(--accent); }
 
   .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 20px; }
   button {
@@ -240,6 +273,7 @@
       <button id="btn-stop" disabled>全部停止</button>
       <span id="status">載入素材庫中…</span>
     </div>
+    <div class="flow" id="flow" hidden></div>
   </section>
 
   <div class="cards" id="cards"></div>
@@ -294,6 +328,15 @@ const PATIENT_OVERLAY_SLIDERS = [
 // 同一份 patientOverlay 會同時顯示在主視窗的卡片與投影視窗的側邊欄，
 // 任一邊動了都要把另一邊的滑桿推到同一個值——比照下面綠幕的 complicationOverlayBoxes。
 const patientOverlayBoxes = [];        // { sync, enabled }
+
+// ---------- 流程（第二刀）----------
+// 「目前載入哪個情境、播到第幾頁」是一份狀態，主視窗與投影側邊欄共用它。
+// 檢視層級也共用：教官在主視窗鑽進某個情境後，打開投影側邊欄應該看到同一個地方。
+let currentScenario = null;
+let flowIndex = -1;                    // 指向「會播的頁」的 index；-1 = 尚未開始
+let sidebarLevel = 'scenarios';        // 'scenarios' | 'slides'
+// 片段 key -> 播放函式，由 segmentActions 登記，generate() 時清空
+const segmentPlayers = new Map();
 
 // 綠幕疊加：每個突發狀況各自記版面與去背容差，重新產生情境後沿用
 const COMP_OVERLAY_DEFAULTS = { size: 70, x: 50, y: 55, tolerance: 40 };
@@ -552,12 +595,13 @@ function buildScenarios() {
       ].filter(Boolean).join('\n'),
     });
     btn.dataset.scenarioId = scenario.id;
-    btn.addEventListener('click', () => applyScenario(scenario));
+    btn.addEventListener('click', () => loadScenario(scenario));
     list.appendChild(btn);
   });
 }
 
-function applyScenario(scenario) {
+// 只設定三個選單，不產生情境。切換某頁啟用時會單獨用到它。
+function applyScenarioSelection(scenario) {
   // 勾哪些突發狀況由 slides 推導，不讀情境上的欄位——那個欄位刻意不存在
   const comps = Scenarios.complicationsOf(scenario);
   $('sel-env').value = scenario.environment;
@@ -566,7 +610,27 @@ function applyScenario(scenario) {
     input.checked = comps.includes(input.value);
   });
   syncScenarioActive();
-  generate();
+}
+
+function loadScenario(scenario) {
+  // 每次都拿最新的那一份（可能剛被覆蓋過），不要抱著按鈕建立時的舊物件
+  currentScenario = activeScenarios.find(s => s.id === scenario.id) || scenario;
+  applyScenarioSelection(currentScenario);
+  generate();                 // 素材要先產生，segmentPlayers 才有東西可登記
+  buildFlowSteps();
+  flowIndex = -1;
+  sidebarLevel = 'slides';
+  renderFlow();
+}
+
+// 手動改選單 = 離開情境，流程跟著失效，否則流程會指向已經不存在的素材
+function leaveScenario() {
+  if (!currentScenario) return;
+  currentScenario = null;
+  flowSteps = [];
+  flowIndex = -1;
+  sidebarLevel = 'scenarios';
+  renderFlow();
 }
 
 // 手動改選單後，亮起來的情境要跟著熄掉，否則會誤以為現在還是那一組
@@ -585,6 +649,111 @@ function syncScenarioActive() {
   [...$('preset-list').children].forEach((btn, i) => {
     btn.classList.toggle('active', !!activeScenarios[i] && matches(activeScenarios[i]));
   });
+}
+
+// ---------- 流程引擎 ----------
+
+// 一個「步驟」是按一次前進會發生的事。多片段的突發狀況會展開成多個步驟——
+// 既有 UI 本來就是一段一段播的，一頁只播第一段會讓後面幾段永遠播不到。
+let flowSteps = [];
+
+function buildFlowSteps() {
+  flowSteps = [];
+  if (!currentScenario) return;
+  const env = $('sel-env').value;
+  const med = $('sel-med').value;
+
+  Scenarios.playableSlides(currentScenario).forEach((slide, slideIndex) => {
+    for (const action of slide.actions) {
+      if (action.type === 'wait') {
+        flowSteps.push({ slideIndex, slideId: slide.id, title: slide.title, kind: 'wait', note: action.note || '' });
+        continue;
+      }
+      const segments = action.segment !== undefined && action.segment !== null
+        ? [action.segment]
+        : complicationSegments(action.complication, env, med);
+      segments.forEach((segment, i) => {
+        flowSteps.push({
+          slideIndex, slideId: slide.id, title: slide.title,
+          kind: 'complication', comp: action.complication, segment,
+          part: segments.length > 1 ? `${i + 1}/${segments.length}` : '',
+        });
+      });
+    }
+  });
+}
+
+function stepLabel(step) {
+  if (!step) return '';
+  if (step.kind === 'wait') return step.note || '等教官口述';
+  return step.comp + (step.part ? `　片段 ${step.part}` : '');
+}
+
+function runStep(step) {
+  if (!step) return;
+  if (step.kind === 'wait') {
+    // 停住的頁不該讓上一段的人物還站在畫面上
+    stopMediaIn($('comp-groups'));
+    stopComplicationProjection();
+    return;
+  }
+  const play = segmentPlayers.get(segmentKey(step.comp, step.segment));
+  if (play) { play(); return; }
+  // 素材缺了不能靜靜跳過——教官會以為自己按錯
+  stopMediaIn($('comp-groups'));
+  stopComplicationProjection();
+  setStatus(`這一步的素材不存在：${step.comp}${step.part ? ` 片段 ${step.part}` : ''}`, true);
+}
+
+function gotoFlow(index) {
+  if (!flowSteps.length) return;
+  flowIndex = Math.max(0, Math.min(index, flowSteps.length - 1));
+  runStep(flowSteps[flowIndex]);
+  renderFlow();
+}
+
+function nextFlow() {
+  if (!flowSteps.length) return;
+  if (flowIndex >= flowSteps.length - 1) return;   // 最後一步就停在那，不繞回開頭
+  gotoFlow(flowIndex + 1);
+}
+
+function prevFlow() {
+  if (!flowSteps.length || flowIndex <= 0) return;
+  gotoFlow(flowIndex - 1);
+}
+
+function stopFlow() {
+  flowIndex = -1;
+  stopAll();
+  renderFlow();
+}
+
+// 切換某頁的啟用：這是「現場臨時抽掉一個橋段」，所以要立刻反映在流程與儲存上
+function toggleSlideEnabled(slideId) {
+  if (!currentScenario) return;
+  const slide = currentScenario.slides.find(s => s.id === slideId);
+  if (!slide) return;
+  slide.enabled = slide.enabled === false;
+  saveScenarioOverride(currentScenario);
+  // 頁數變了，目前這一步可能已經不存在，收斂回合理範圍
+  const before = flowSteps[flowIndex];
+  buildFlowSteps();
+  flowIndex = before
+    ? Math.min(flowSteps.findIndex(s => s.slideId === before.slideId), flowSteps.length - 1)
+    : -1;
+  if (flowIndex < 0) flowIndex = -1;
+  applyScenarioSelection(currentScenario);   // 勾選是推導出來的，關掉一頁就要跟著變
+  renderFlow();
+}
+
+// 改過的情境（含內建）一律以自訂身分存進 localStorage，同 id 覆蓋內建
+function saveScenarioOverride(scenario) {
+  const custom = readCustomScenarios().filter(s => s.id !== scenario.id);
+  custom.push(Scenarios.forExport([scenario])[0]);
+  writeCustomScenarios(
+    Scenarios.normalizeScenarios(custom, DATA.options).scenarios);
+  buildScenarios();
 }
 
 // 空陣列＝該維度不限
@@ -860,6 +1029,37 @@ function projectionMarkup() {
   #projection-sidebar .sidebar-empty {
     font-size: 13px; line-height: 1.6; color: rgba(255,255,255,.55);
   }
+  /* 流程：與主視窗共用 builder，class 名稱相同，樣式在這個 document 另寫一份 */
+  #projection-sidebar .flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #projection-sidebar .flow-title { font-size: 15px; font-weight: 700; }
+  #projection-sidebar .flow-counter { font-size: 12px; color: rgba(255,255,255,.6); margin-left: auto; }
+  #projection-sidebar .flow-now {
+    margin: 9px 0 0; padding: 9px 11px; border-radius: 8px;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16);
+    font-size: 14px; line-height: 1.5;
+  }
+  #projection-sidebar .flow-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  #projection-sidebar .flow-btn {
+    font: 500 13px/1.2 inherit; padding: 7px 13px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.35); border-radius: 7px;
+    background: rgba(255,255,255,.1); color: #fff;
+  }
+  #projection-sidebar .flow-btn.primary { background: #ff6b3d; border-color: #ff6b3d; color: #1a1005; font-weight: 700; }
+  #projection-sidebar .flow-btn:disabled { opacity: .4; cursor: not-allowed; }
+  #projection-sidebar .flow-btn:focus-visible { outline: 3px solid #ff6b3d; outline-offset: 2px; }
+  #projection-sidebar .flow-list { display: grid; gap: 5px; margin-top: 11px; }
+  #projection-sidebar .flow-row {
+    display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    padding: 8px 10px; border-radius: 8px; font: inherit; font-size: 13px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16); color: #fff;
+  }
+  #projection-sidebar .flow-row.clickable { cursor: pointer; }
+  #projection-sidebar .flow-row.current { border-color: #ff6b3d; background: rgba(255,107,61,.22); }
+  #projection-sidebar .flow-row.off .flow-row-title { text-decoration: line-through; opacity: .55; }
+  #projection-sidebar .flow-row-title { flex: 1 1 auto; }
+  #projection-sidebar .flow-row-meta { flex: none; font-size: 11px; color: rgba(255,255,255,.55); }
+  #projection-sidebar .flow-toggle { display: inline-flex; align-items: center; flex: none; }
+  #projection-sidebar .flow-toggle input { margin: 0; accent-color: #ff6b3d; }
   /* 以下與主視窗的 .overlay-* 同名同結構，但投影視窗是獨立 document，樣式要各寫一份 */
   #projection-sidebar .overlay-controls {
     padding: 10px 12px; border-radius: 8px;
@@ -960,6 +1160,7 @@ function setupProjectionWindow(win) {
 
   doc.addEventListener('pointermove', revealControls);
   doc.addEventListener('keydown', revealControls);
+  doc.addEventListener('keydown', handleFlowKey);   // 投影視窗也要能推流程
   doc.addEventListener('click', () => {
     const video = doc.querySelector('#projection-stage video');
     if (video && video.paused) video.play().catch(() => {});
@@ -1666,6 +1867,133 @@ function sidebarComplicationControls(comp, doc) {
   return box;
 }
 
+// ---------- 流程 UI（主視窗與投影側邊欄共用同一個 builder）----------
+
+function flowButton(doc, label, onClick, { primary = false, disabled = false } = {}) {
+  const btn = Object.assign(doc.createElement('button'), {
+    type: 'button', textContent: label, disabled,
+  });
+  btn.className = 'flow-btn' + (primary ? ' primary' : '');
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+// L1：情境清單
+function buildScenarioList(doc) {
+  const wrap = doc.createElement('div');
+  wrap.className = 'flow-list';
+  if (!activeScenarios.length) {
+    const empty = doc.createElement('p');
+    empty.className = 'sidebar-empty';
+    empty.textContent = '沒有可用的情境。請在 scenario-data.yaml 的 scenarios: 底下新增。';
+    wrap.appendChild(empty);
+    return wrap;
+  }
+  activeScenarios.forEach(scenario => {
+    const row = doc.createElement('button');
+    row.type = 'button';
+    row.className = 'flow-row flow-row-btn';
+    const name = doc.createElement('span');
+    name.className = 'flow-row-title';
+    name.textContent = scenario.name;
+    const meta = doc.createElement('span');
+    meta.className = 'flow-row-meta';
+    meta.textContent = `${scenario.environment}／${scenario.medicalEvent}　${Scenarios.playableSlides(scenario).length} 頁`;
+    row.append(name, meta);
+    row.addEventListener('click', () => loadScenario(scenario));
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+// L2：簡報頁清單 ＋ 播放控制
+function buildFlowPanel(doc) {
+  const wrap = doc.createElement('div');
+  wrap.className = 'flow-panel';
+  if (!currentScenario) return wrap;
+
+  const head = doc.createElement('div');
+  head.className = 'flow-head';
+  const back = flowButton(doc, '‹ 情境', () => { sidebarLevel = 'scenarios'; renderFlow(); });
+  const title = doc.createElement('span');
+  title.className = 'flow-title';
+  title.textContent = currentScenario.name;
+  const counter = doc.createElement('span');
+  counter.className = 'flow-counter';
+  counter.textContent = flowSteps.length
+    ? (flowIndex < 0 ? `尚未開始 · 共 ${flowSteps.length} 步` : `第 ${flowIndex + 1} / ${flowSteps.length} 步`)
+    : '這個情境沒有可播的頁';
+  head.append(back, title, counter);
+  wrap.appendChild(head);
+
+  const now = doc.createElement('p');
+  now.className = 'flow-now';
+  now.textContent = flowIndex < 0
+    ? '按「開始」或方向鍵 → 進入第一步'
+    : stepLabel(flowSteps[flowIndex]);
+  wrap.appendChild(now);
+
+  const bar = doc.createElement('div');
+  bar.className = 'flow-actions';
+  bar.append(
+    flowButton(doc, '‹ 上一步', prevFlow, { disabled: flowIndex <= 0 }),
+    flowButton(doc, flowIndex < 0 ? '開始' : '下一步 ›',
+      () => (flowIndex < 0 ? gotoFlow(0) : nextFlow()),
+      { primary: true, disabled: !flowSteps.length || flowIndex >= flowSteps.length - 1 }),
+    flowButton(doc, '停止', stopFlow),
+  );
+  wrap.appendChild(bar);
+
+  const list = doc.createElement('div');
+  list.className = 'flow-list';
+  const currentSlideId = flowIndex >= 0 ? flowSteps[flowIndex].slideId : null;
+  currentScenario.slides.forEach(slide => {
+    const row = doc.createElement('div');
+    row.className = 'flow-row' + (slide.id === currentSlideId ? ' current' : '')
+      + (slide.enabled === false ? ' off' : '');
+
+    const toggle = doc.createElement('label');
+    toggle.className = 'flow-toggle';
+    const box = Object.assign(doc.createElement('input'),
+      { type: 'checkbox', checked: slide.enabled !== false });
+    box.setAttribute('aria-label', `啟用「${slide.title}」`);
+    box.addEventListener('change', () => toggleSlideEnabled(slide.id));
+    toggle.appendChild(box);
+
+    const name = doc.createElement('span');
+    name.className = 'flow-row-title';
+    name.textContent = slide.title;
+
+    const meta = doc.createElement('span');
+    meta.className = 'flow-row-meta';
+    const steps = flowSteps.filter(s => s.slideId === slide.id);
+    meta.textContent = slide.enabled === false
+      ? '播放時跳過'
+      : (steps.length > 1 ? `${steps.length} 段` : (slide.actions[0].type === 'wait' ? '等教官' : ''));
+
+    row.append(toggle, name, meta);
+    // 唯讀階段：點整列＝跳到那一頁的第一步（編輯留給第三刀）
+    if (slide.enabled !== false) {
+      row.classList.add('clickable');
+      row.addEventListener('click', e => {
+        if (e.target.closest('.flow-toggle')) return;
+        const i = flowSteps.findIndex(s => s.slideId === slide.id);
+        if (i >= 0) gotoFlow(i);
+      });
+    }
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+  return wrap;
+}
+
+function renderFlow() {
+  const box = $('flow');
+  box.replaceChildren(currentScenario ? buildFlowPanel(document) : document.createElement('div'));
+  box.hidden = !currentScenario;
+  renderProjectionSidebar();
+}
+
 function sidebarSection(doc, title, node) {
   const wrap = doc.createElement('section');
   const heading = doc.createElement('div');
@@ -1696,6 +2024,13 @@ function renderProjectionSidebar() {
     if (patientOverlayBoxes[i].sidebar) patientOverlayBoxes.splice(i, 1);
   }
   box.innerHTML = '';
+
+  // 流程在最上面：訓練進行中最常看的是「現在第幾步」，版面滑桿是偶爾才調的
+  if (sidebarLevel === 'slides' && currentScenario) {
+    box.appendChild(buildFlowPanel(doc));
+  } else {
+    box.appendChild(sidebarSection(doc, '情境', buildScenarioList(doc)));
+  }
 
   let patientNode;
   if (hasProjectablePatientPhoto(currentPatientPhotoAsset)) {
@@ -1785,11 +2120,14 @@ function segmentActions(comp, segment, block, playLabel) {
   play.dataset.comp = comp;
   play.dataset.segment = segment;
   const stop = Object.assign(document.createElement('button'), { className: 'stop', textContent: '停止' });
-  play.addEventListener('click', () => {
+  const playThis = () => {
     stopMediaIn($('comp-groups'));   // 一次只演一段，接著演下一段就把上一段收掉
     playMediaIn(block);
     startComplicationProjection(comp, segment, 'play');
-  });
+  };
+  // 流程推進時走的是同一個函式，不是另寫一份——複製一份播放邏輯遲早會跟按鈕長不一樣
+  segmentPlayers.set(segmentKey(comp, segment), playThis);
+  play.addEventListener('click', playThis);
   stop.addEventListener('click', () => {
     stopMediaIn(block);
     if (activeComplication === comp && activeSegment === segment) stopComplicationProjection();
@@ -1871,6 +2209,7 @@ function generate() {
   groups.innerHTML = '';
   complicationOverlayBoxes.length = 0;
   patientOverlayBoxes.length = 0;
+  segmentPlayers.clear();
   currentEnvironmentAsset = null;
   currentPatientPhotoAsset = null;
   Object.keys(complicationVideoAssets).forEach(key => delete complicationVideoAssets[key]);
@@ -1988,9 +2327,51 @@ function stopAll() {
   stopProjection();
 }
 
+// ---------- 快捷鍵 ----------
+// 教官的手不會固定在某一個視窗上，所以主視窗與投影視窗都要掛一份。
+// 焦點在表單元件上時一律放行——不然使用者在調滑桿或選單，按方向鍵卻跳了頁。
+const FORM_TAGS = ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'OPTION'];
+
+function handleFlowKey(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const tag = e.target && e.target.tagName;
+  if (FORM_TAGS.includes(tag) || (e.target && e.target.isContentEditable)) return;
+
+  switch (e.key) {
+    case 'ArrowRight': case 'PageDown': case ' ': case 'Spacebar':
+      if (!flowSteps.length) return;
+      e.preventDefault();
+      if (flowIndex < 0) gotoFlow(0); else nextFlow();
+      break;
+    case 'ArrowLeft': case 'PageUp':
+      if (!flowSteps.length) return;
+      e.preventDefault();
+      prevFlow();
+      break;
+    case 'Home':
+      if (!flowSteps.length) return;
+      e.preventDefault();
+      gotoFlow(0);
+      break;
+    case 'End':
+      if (!flowSteps.length) return;
+      e.preventDefault();
+      gotoFlow(flowSteps.length - 1);
+      break;
+    case 'Escape':
+      e.preventDefault();
+      stopFlow();
+      break;
+    default:
+  }
+}
+
+document.addEventListener('keydown', handleFlowKey);
+
 $('btn-gen').addEventListener('click', generate);
-$('sel-env').addEventListener('change', syncScenarioActive);
-$('sel-med').addEventListener('change', syncScenarioActive);
+// 手動改選單＝離開情境：流程會指向已經不存在的素材，留著比清掉更危險
+$('sel-env').addEventListener('change', () => { syncScenarioActive(); leaveScenario(); });
+$('sel-med').addEventListener('change', () => { syncScenarioActive(); leaveScenario(); });
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', playScene);
 $('btn-stop').addEventListener('click', stopAll);
