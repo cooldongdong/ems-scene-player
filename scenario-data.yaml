@@ -51,66 +51,173 @@ options:
     - 同伴咆哮威脅
     - 情緒失控自傷
 
-# 常用情境（preset）—— 頁面頂端的快捷鈕，一鍵套用整組設定並直接產生情境。
+# 情境（scenario）—— 一場訓練的完整劇本：素材組合 ＋ 一串照順序演的簡報頁。
 #
-#   為什麼要有這一層：三個選單可以排出 5×6 = 30 種基本組合，但素材庫不是每一格都填滿，
-#   選到沒素材的格子只會看到「查無符合的素材」。preset 是「這組確定跑得動」的人工背書名單，
-#   讓第一次用的人不必靠試誤找出哪些能用。
+#   為什麼要有這一層：
+#   ① 三個選單可以排出 5×6 = 30 種基本組合，但素材庫不是每一格都填滿，選到沒素材的格子
+#      只會看到「查無符合的素材」。情境是「這組確定跑得動」的人工背書名單。
+#   ② 光有素材還不夠——訓練需要的是「先發生什麼、再發生什麼」。slides 就是那條時間線。
 #
 #   編輯規則：
-#   1. 整段 presets 可以直接刪掉，頁面會自動不顯示快捷鈕區塊，不影響其他功能。
-#   2. name 是按鈕上的字，越短越好；note 會變成滑鼠停留時的說明，可省略。
-#   3. complications 留空或省略 = 只套環境與急救事件，不勾任何突發狀況。
-#   4. environment／medicalEvent／complications 的值必須和上面 options 完全一致，
-#      對不上的 preset 會被跳過並在瀏覽器 console 留一行警告。
-#   5. 新增 preset 前請先實際跑一次確認素材齊全——這份名單的價值就在於它是驗證過的，
-#      放進沒素材的組合等於讓快捷鈕變回地雷。
+#   1. 整段 scenarios 可以直接刪掉，頁面會自動不顯示情境清單，不影響其他功能。
+#   2. id 必須唯一且穩定，請用 ASCII kebab-case——它是自訂情境覆蓋內建情境的比對依據，
+#      改了 id 等於變成另一個情境，使用者存在瀏覽器裡的修改會對不上而失效。
+#   3. name 是清單上的字，越短越好；note 會變成滑鼠停留時的說明，可省略。
+#   4. environment／medicalEvent 的值必須和上面 options 完全一致，對不上整筆會被跳過。
+#   5. **不要寫 complications 欄位。** 這個情境用到哪些突發狀況，是從所有「啟用中」的
+#      簡報頁自動推導出來的。多寫一份就是第二份真相，遲早出現「勾了但沒有任何一頁用到」
+#      或反過來的矛盾。
+#   6. 每個情境至少要有一頁有效的簡報頁，否則整筆會被跳過——空流程的情境載入後是一片
+#      空白，比不存在更難懂。
+#
+#   簡報頁（slides）：
+#   - id：情境內唯一即可，省略時自動編成 s1、s2……
+#   - title：清單上顯示的字
+#   - enabled：只有明確寫 false 才是關閉。關掉的頁**播放時會跳過，但仍留在清單裡**，
+#     用途是現場臨時抽掉一個橋段，不必真的刪掉它。省略視為啟用，手寫時不必每頁都補。
+#   - actions：這一頁要發生的事，目前只支援兩種型別（刻意收斂，先跑過真實訓練再考慮加）：
+#       type: wait          停住等教官口述，可用 note 寫提示
+#       type: complication  播某個突發狀況；complication 填狀況名稱，
+#                           另可填 segment 只播其中一段（省略＝該狀況的全部片段）
 #
 #   下列 7 組的來源：把 30 種基本組合逐一比對素材庫後，四個角色（環境影像、環境聲音、
 #   病患照片、病患聲音）都取得到素材的就是這 7 組；其餘 23 組至少缺一項，多半缺病患照片。
-#   這只代表「素材齊全」，不代表「情境合理」——實際播過覺得不合適就直接刪掉那一筆。
-presets:
-  - name: 住宅 OHCA
+#   這只代表「素材齊全」，不代表「情境合理」——實際播過覺得不合適就直接改掉那一筆。
+scenarios:
+  - id: home-ohca
+    name: 住宅 OHCA
     environment: 住宅客廳
     medicalEvent: 心跳停止（OHCA）
-    complications: [家屬崩潰哭喊]
     note: 家中倒地的長者，家屬在旁崩潰
+    slides:
+      - id: s1
+        title: 抵達現場
+        actions:
+          - type: wait
+            note: 描述現場、指派任務，等隊員完成初步評估
+      - id: s2
+        title: 家屬崩潰哭喊
+        actions:
+          - type: complication
+            complication: 家屬崩潰哭喊
 
-  - name: 套房自傷
+  - id: studio-selfharm
+    name: 套房自傷
     environment: 出租套房
     medicalEvent: 自傷（割腕）
-    complications: [情緒失控自傷]
     note: 套房內自傷，患者情緒仍在失控
+    slides:
+      - id: s1
+        title: 抵達現場
+        actions:
+          - type: wait
+            note: 描述現場、確認環境安全再接近患者
+      - id: s2
+        title: 情緒失控自傷
+        actions:
+          - type: complication
+            complication: 情緒失控自傷
 
-  - name: 街頭外傷
+  - id: street-trauma
+    name: 街頭外傷
     environment: 市區街道
     medicalEvent: 外傷出血
-    complications: [旁人嗆聲干擾, 同事欲搬動傷患]
     note: 路邊外傷出血，圍觀者與同事都在干擾處置
+    slides:
+      - id: s1
+        title: 抵達現場
+        actions:
+          - type: wait
+            note: 描述現場、指派任務，開始止血
+      - id: s2
+        title: 旁人嗆聲干擾
+        actions:
+          - type: complication
+            complication: 旁人嗆聲干擾
+      - id: s3
+        title: 同事想搬動傷患
+        actions:
+          - type: complication
+            complication: 同事欲搬動傷患
 
-  - name: 街頭墜落骨折
+  - id: street-fall
+    name: 街頭墜落骨折
     environment: 市區街道
     medicalEvent: 骨折（墜落）
-    complications: [同事欲搬動傷患]
     note: 墜落骨折，同事想直接把人搬走
+    slides:
+      - id: s1
+        title: 抵達現場
+        actions:
+          - type: wait
+            note: 描述現場、評估墜落高度與可能的脊椎傷害
+      - id: s2
+        title: 同事想搬動傷患
+        actions:
+          - type: complication
+            complication: 同事欲搬動傷患
 
-  - name: 路口車禍
+  - id: intersection-crash
+    name: 路口車禍
     environment: 市區街道
     medicalEvent: 車禍多重傷
-    complications: [肇事雙方爭吵, 旁人嗆聲干擾]
     note: 路口車禍多重傷，肇事雙方在旁爭吵
+    slides:
+      - id: s1
+        title: 抵達現場
+        actions:
+          - type: wait
+            note: 描述現場、確認交通管制與傷患人數
+      - id: s2
+        title: 肇事雙方爭吵
+        actions:
+          - type: complication
+            complication: 肇事雙方爭吵
+      - id: s3
+        title: 旁人嗆聲干擾
+        actions:
+          - type: complication
+            complication: 旁人嗆聲干擾
 
-  - name: 工地外傷
+  - id: site-trauma
+    name: 工地外傷
     environment: 工地
     medicalEvent: 外傷出血
-    complications: [同事欲搬動傷患, 旁人嗆聲干擾]
     note: 工地外傷出血，工班急著搬動傷患
+    slides:
+      - id: s1
+        title: 抵達現場
+        actions:
+          - type: wait
+            note: 描述現場、確認工地危害與動線
+      - id: s2
+        title: 同事想搬動傷患
+        actions:
+          - type: complication
+            complication: 同事欲搬動傷患
+      - id: s3
+        title: 旁人嗆聲干擾
+        actions:
+          - type: complication
+            complication: 旁人嗆聲干擾
 
-  - name: 工地墜落
+  - id: site-fall
+    name: 工地墜落
     environment: 工地
     medicalEvent: 骨折（墜落）
-    complications: [同事欲搬動傷患]
     note: 工地墜落骨折，同事想直接搬動
+    slides:
+      - id: s1
+        title: 抵達現場
+        actions:
+          - type: wait
+            note: 描述現場、評估墜落高度與固定需求
+      - id: s2
+        title: 同事想搬動傷患
+        actions:
+          - type: complication
+            complication: 同事欲搬動傷患
+
 
 assets:
   # ---------- 環境影像 ----------

@@ -253,6 +253,8 @@ if (typeof jsyaml === 'undefined') {
   document.write('<script src="https://cdn.jsdelivr.net/npm/js-yaml@4/dist/js-yaml.min.js"><\/script>');
 }
 </script>
+<!-- 情境資料層：純函式、不碰 DOM，同一份檔案也被 test/scenarios.test.js 用 Node 載入測試 -->
+<script src="js/scenarios.js"></script>
 <script>
 const ROLES = [
   { role: 'environment_video',  label: '環境影像' },
@@ -420,6 +422,7 @@ async function init() {
     if (typeof jsyaml === 'undefined') throw new Error('js-yaml 未載入');
     DATA = jsyaml.load(await res.text());
     if (!DATA || !Array.isArray(DATA.assets)) throw new Error('scenario-data.yaml 缺少 assets 陣列');
+    if (typeof Scenarios === 'undefined') throw new Error('js/scenarios.js 未載入');
     buildControls();
     $('btn-gen').disabled = false;
     setStatus(`素材庫已載入：${DATA.assets.length} 筆`);
@@ -472,101 +475,115 @@ function buildControls() {
     label.append(input, document.createTextNode(v));
     box.appendChild(label);
   }
-  box.addEventListener('change', syncPresetActive);
+  box.addEventListener('change', syncScenarioActive);
 
-  buildPresets();
-  syncPresetActive();
+  buildScenarios();
+  syncScenarioActive();
 }
 
 function selectedComplications() {
   return [...document.querySelectorAll('#checks-comp input:checked')].map(i => i.value);
 }
 
-// ---------- 常用情境（preset）----------
-// 三個選單能排出的組合遠多於素材庫填滿的格子，選到空格只會看到「查無符合的素材」。
-// preset 是人工驗證過、素材確定齊全的名單，讓人不必靠試誤找出哪些組合能用。
+// ---------- 情境（scenario）----------
+// 一個情境 = 素材組合（環境×急救事件）＋ 一串照順序演的簡報頁。
+// 資料層在 js/scenarios.js，是不碰 DOM 的純函式，由 test/scenarios.test.js 釘住（node --test）。
+// 這裡只負責「把資料接到畫面上」，判斷邏輯一律不要寫在這一層，否則測不到。
 
-function presetComplications(preset) {
-  const list = preset.complications ?? preset.complication ?? [];
-  return Array.isArray(list) ? list : [list];
-}
+const SCENARIO_STORE_KEY = 'ems-scene-player:scenarios';
 
-// buildPresets 時算一次就存起來：驗證會印 console 警告，
+// buildScenarios 時算一次就存起來：正規化會印 console 警告，
 // 若每次選單變動都重算，同一則警告會被洗版式地重複印出。
-let activePresets = [];
+let activeScenarios = [];
 
-// 值對不上 options 的 preset 直接跳過：與其套用一半讓人以為選好了，不如當它不存在。
-function validPresets() {
-  const raw = Array.isArray(DATA.presets) ? DATA.presets : [];
-  const envs = environmentGroups().flatMap(([, values]) => values);
-  const meds = optionsFor('medicalEvent');
-  const comps = optionsFor('complication');
-  return raw.filter(p => {
-    const bad = [];
-    if (!envs.includes(p.environment)) bad.push(`environment「${p.environment}」`);
-    if (!meds.includes(p.medicalEvent)) bad.push(`medicalEvent「${p.medicalEvent}」`);
-    presetComplications(p).forEach(c => {
-      if (!comps.includes(c)) bad.push(`complication「${c}」`);
-    });
-    if (bad.length) {
-      console.warn(`preset「${p.name || '(未命名)'}」的 ${bad.join('、')} 不在 options 內，已跳過`);
-    }
-    return !bad.length;
-  });
+// 自訂情境存 localStorage，用 JSON——只存字串、往返精確、沒有人會手讀這一份。
+// （匯出給人看的檔案才用 YAML，那是另一條路，見 js/scenarios.js 的 exportYaml。）
+function readCustomScenarios() {
+  try {
+    const raw = localStorage.getItem(SCENARIO_STORE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    // 壞掉的工作副本不該讓整個站台開不起來，回到純內建即可
+    console.warn('自訂情境讀取失敗，改用內建情境：' + err.message);
+    return [];
+  }
 }
 
-function buildPresets() {
+function writeCustomScenarios(scenarios) {
+  try {
+    localStorage.setItem(SCENARIO_STORE_KEY, JSON.stringify(Scenarios.forExport(scenarios)));
+    return true;
+  } catch (err) {
+    setStatus('自訂情境儲存失敗：' + err.message, true);
+    return false;
+  }
+}
+
+function buildScenarios() {
   const box = $('presets');
   const list = $('preset-list');
-  activePresets = DATA ? validPresets() : [];
   list.innerHTML = '';
-  // 沒宣告 presets 就整塊收起來，舊的 scenario-data.yaml 不會多出空欄位
-  box.hidden = !activePresets.length;
-  if (!activePresets.length) return;
+  activeScenarios = [];
 
-  activePresets.forEach(preset => {
-    const comps = presetComplications(preset);
+  if (DATA) {
+    const builtin = Scenarios.normalizeScenarios(DATA.scenarios, DATA.options);
+    const custom = Scenarios.normalizeScenarios(readCustomScenarios(), DATA.options);
+    [...builtin.warnings, ...custom.warnings].forEach(w => console.warn(w));
+    activeScenarios = Scenarios.mergeScenarios(builtin.scenarios, custom.scenarios);
+  }
+
+  // 沒宣告 scenarios 就整塊收起來，舊的 scenario-data.yaml 不會多出空欄位
+  box.hidden = !activeScenarios.length;
+  if (!activeScenarios.length) return;
+
+  activeScenarios.forEach(scenario => {
+    const comps = Scenarios.complicationsOf(scenario);
+    const pages = Scenarios.playableSlides(scenario).length;
     const btn = Object.assign(document.createElement('button'), {
       type: 'button',
-      textContent: preset.name || `${preset.environment}／${preset.medicalEvent}`,
+      textContent: scenario.name,
       title: [
-        `${preset.environment}／${preset.medicalEvent}`,
+        `${scenario.environment}／${scenario.medicalEvent}`,
         comps.length ? `突發狀況：${comps.join('、')}` : '不含突發狀況',
-        preset.note || '',
+        `${pages} 頁流程`,
+        scenario.note || '',
       ].filter(Boolean).join('\n'),
     });
-    btn.dataset.presetName = preset.name || '';
-    btn.addEventListener('click', () => applyPreset(preset));
+    btn.dataset.scenarioId = scenario.id;
+    btn.addEventListener('click', () => applyScenario(scenario));
     list.appendChild(btn);
   });
 }
 
-function applyPreset(preset) {
-  const comps = presetComplications(preset);
-  $('sel-env').value = preset.environment;
-  $('sel-med').value = preset.medicalEvent;
+function applyScenario(scenario) {
+  // 勾哪些突發狀況由 slides 推導，不讀情境上的欄位——那個欄位刻意不存在
+  const comps = Scenarios.complicationsOf(scenario);
+  $('sel-env').value = scenario.environment;
+  $('sel-med').value = scenario.medicalEvent;
   document.querySelectorAll('#checks-comp input').forEach(input => {
     input.checked = comps.includes(input.value);
   });
-  syncPresetActive();
+  syncScenarioActive();
   generate();
 }
 
-// 手動改選單後，亮起來的 preset 要跟著熄掉，否則會誤以為現在還是那一組
-function syncPresetActive() {
+// 手動改選單後，亮起來的情境要跟著熄掉，否則會誤以為現在還是那一組
+function syncScenarioActive() {
   if (!DATA) return;
   const env = $('sel-env').value;
   const med = $('sel-med').value;
   const picked = selectedComplications();
-  const matches = preset => preset.environment === env
-    && preset.medicalEvent === med
+  const matches = scenario => scenario.environment === env
+    && scenario.medicalEvent === med
     && (() => {
-      const comps = presetComplications(preset);
+      const comps = Scenarios.complicationsOf(scenario);
       return comps.length === picked.length && comps.every(c => picked.includes(c));
     })();
 
   [...$('preset-list').children].forEach((btn, i) => {
-    btn.classList.toggle('active', !!activePresets[i] && matches(activePresets[i]));
+    btn.classList.toggle('active', !!activeScenarios[i] && matches(activeScenarios[i]));
   });
 }
 
@@ -1972,8 +1989,8 @@ function stopAll() {
 }
 
 $('btn-gen').addEventListener('click', generate);
-$('sel-env').addEventListener('change', syncPresetActive);
-$('sel-med').addEventListener('change', syncPresetActive);
+$('sel-env').addEventListener('change', syncScenarioActive);
+$('sel-med').addEventListener('change', syncScenarioActive);
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', playScene);
 $('btn-stop').addEventListener('click', stopAll);
