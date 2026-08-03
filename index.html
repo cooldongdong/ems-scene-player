@@ -52,6 +52,16 @@
   .checks label:has(input:checked) { border-color: var(--accent); background: var(--accent-dim); }
   .checks input { accent-color: var(--accent); margin: 0; }
 
+  /* 常用情境快捷鈕：素材確定齊全的組合，點一下套用整組設定並直接產生 */
+  .presets { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+  .presets .title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
+  .preset-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .preset-list button {
+    border-radius: 999px; padding: 6px 14px; font-size: 14px;
+  }
+  /* 目前三個選單剛好等於某個 preset 時亮起來，讓人知道自己在哪一組 */
+  .preset-list button.active { border-color: var(--accent); background: var(--accent-dim); }
+
   .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 20px; }
   button {
     font-family: inherit; font-size: 15px; padding: 11px 22px;
@@ -205,6 +215,10 @@
   </header>
 
   <section class="panel">
+    <div class="presets" id="presets" hidden>
+      <span class="title">常用情境（素材齊全，點一下直接套用並產生）</span>
+      <div class="preset-list" id="preset-list"></div>
+    </div>
     <div class="controls">
       <div class="field">
         <label class="title" for="sel-env">環境（單選）</label>
@@ -447,10 +461,102 @@ function buildControls() {
     label.append(input, document.createTextNode(v));
     box.appendChild(label);
   }
+  box.addEventListener('change', syncPresetActive);
+
+  buildPresets();
+  syncPresetActive();
 }
 
 function selectedComplications() {
   return [...document.querySelectorAll('#checks-comp input:checked')].map(i => i.value);
+}
+
+// ---------- 常用情境（preset）----------
+// 三個選單能排出的組合遠多於素材庫填滿的格子，選到空格只會看到「查無符合的素材」。
+// preset 是人工驗證過、素材確定齊全的名單，讓人不必靠試誤找出哪些組合能用。
+
+function presetComplications(preset) {
+  const list = preset.complications ?? preset.complication ?? [];
+  return Array.isArray(list) ? list : [list];
+}
+
+// buildPresets 時算一次就存起來：驗證會印 console 警告，
+// 若每次選單變動都重算，同一則警告會被洗版式地重複印出。
+let activePresets = [];
+
+// 值對不上 options 的 preset 直接跳過：與其套用一半讓人以為選好了，不如當它不存在。
+function validPresets() {
+  const raw = Array.isArray(DATA.presets) ? DATA.presets : [];
+  const envs = environmentGroups().flatMap(([, values]) => values);
+  const meds = optionsFor('medicalEvent');
+  const comps = optionsFor('complication');
+  return raw.filter(p => {
+    const bad = [];
+    if (!envs.includes(p.environment)) bad.push(`environment「${p.environment}」`);
+    if (!meds.includes(p.medicalEvent)) bad.push(`medicalEvent「${p.medicalEvent}」`);
+    presetComplications(p).forEach(c => {
+      if (!comps.includes(c)) bad.push(`complication「${c}」`);
+    });
+    if (bad.length) {
+      console.warn(`preset「${p.name || '(未命名)'}」的 ${bad.join('、')} 不在 options 內，已跳過`);
+    }
+    return !bad.length;
+  });
+}
+
+function buildPresets() {
+  const box = $('presets');
+  const list = $('preset-list');
+  activePresets = DATA ? validPresets() : [];
+  list.innerHTML = '';
+  // 沒宣告 presets 就整塊收起來，舊的 scenario-data.yaml 不會多出空欄位
+  box.hidden = !activePresets.length;
+  if (!activePresets.length) return;
+
+  activePresets.forEach(preset => {
+    const comps = presetComplications(preset);
+    const btn = Object.assign(document.createElement('button'), {
+      type: 'button',
+      textContent: preset.name || `${preset.environment}／${preset.medicalEvent}`,
+      title: [
+        `${preset.environment}／${preset.medicalEvent}`,
+        comps.length ? `突發狀況：${comps.join('、')}` : '不含突發狀況',
+        preset.note || '',
+      ].filter(Boolean).join('\n'),
+    });
+    btn.dataset.presetName = preset.name || '';
+    btn.addEventListener('click', () => applyPreset(preset));
+    list.appendChild(btn);
+  });
+}
+
+function applyPreset(preset) {
+  const comps = presetComplications(preset);
+  $('sel-env').value = preset.environment;
+  $('sel-med').value = preset.medicalEvent;
+  document.querySelectorAll('#checks-comp input').forEach(input => {
+    input.checked = comps.includes(input.value);
+  });
+  syncPresetActive();
+  generate();
+}
+
+// 手動改選單後，亮起來的 preset 要跟著熄掉，否則會誤以為現在還是那一組
+function syncPresetActive() {
+  if (!DATA) return;
+  const env = $('sel-env').value;
+  const med = $('sel-med').value;
+  const picked = selectedComplications();
+  const matches = preset => preset.environment === env
+    && preset.medicalEvent === med
+    && (() => {
+      const comps = presetComplications(preset);
+      return comps.length === picked.length && comps.every(c => picked.includes(c));
+    })();
+
+  [...$('preset-list').children].forEach((btn, i) => {
+    btn.classList.toggle('active', !!activePresets[i] && matches(activePresets[i]));
+  });
 }
 
 // 空陣列＝該維度不限
@@ -1692,6 +1798,8 @@ function stopAll() {
 }
 
 $('btn-gen').addEventListener('click', generate);
+$('sel-env').addEventListener('change', syncPresetActive);
+$('sel-med').addEventListener('change', syncPresetActive);
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', playScene);
 $('btn-stop').addEventListener('click', stopAll);
