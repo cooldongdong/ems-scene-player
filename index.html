@@ -59,6 +59,9 @@
   .checks label.unavailable input { cursor: not-allowed; }
   .coverage-note { margin: 14px 0 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
   .coverage-note.warn { color: #ffb27a; }
+  .assets-link { margin: 4px 0 0; font-size: 13px; }
+  .assets-link a { color: var(--muted); text-decoration: none; }
+  .assets-link a:hover { color: var(--accent); }
 
   /* 常用情境快捷鈕：素材確定齊全的組合，點一下套用整組設定並直接產生 */
   .presets { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
@@ -307,6 +310,7 @@
       </div>
     </div>
     <p class="coverage-note" id="coverage-note"></p>
+    <p class="assets-link"><a href="assets.html">素材庫與覆蓋表 →</a></p>
     <div class="actions">
       <button class="primary" id="btn-gen" disabled>產生情境</button>
       <button id="btn-project" disabled>開啟投影視窗</button>
@@ -581,6 +585,22 @@ function checkScenarioApi() {
   return null;
 }
 
+// 素材頁的覆蓋表點一格會帶 ?env=&med= 過來。值對不上就當作沒帶——
+// 網址是使用者能亂改的東西，照單全收會讓選單進到一個不存在的狀態。
+function applyQueryCondition() {
+  const params = new URLSearchParams(location.search);
+  const env = params.get('env');
+  const med = params.get('med');
+  const envs = environmentGroups().flatMap(([, values]) => values);
+  let changed = false;
+  if (env && envs.includes(env)) { $('sel-env').value = env; changed = true; }
+  if (med && optionsFor('medicalEvent').includes(med)) { $('sel-med').value = med; changed = true; }
+  if (changed) {
+    refreshComplicationAvailability();
+    syncScenarioActive();
+  }
+}
+
 async function init() {
   // 讀檔與後續處理分開接錯：只有真的抓不到檔才該建議「用本地伺服器開啟」。
   // 混在一起的話，任何錯誤都會被說成伺服器問題，把人指向錯的方向。
@@ -603,6 +623,7 @@ async function init() {
     DATA = jsyaml.load(text);
     if (!DATA || !Array.isArray(DATA.assets)) throw new Error('scenario-data.yaml 缺少 assets 陣列');
     buildControls();
+    applyQueryCondition();
     $('btn-gen').disabled = false;
     setStatus(`素材庫已載入：${DATA.assets.length} 筆`);
   } catch (err) {
