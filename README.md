@@ -30,6 +30,26 @@ python3 -m http.server 8000
 按 Ctrl+C 就等於關掉網站。要確認是不是已經在跑了，用 `lsof -nP -iTCP:8000 -sTCP:LISTEN` —— 有輸出就是還活著，
 這時再跑一次會拿到 `OSError: [Errno 48] Address already in use`，不是壞掉，是不用再開一個。
 
+### 改了 `js/` 之後要強制重新整理
+
+`python3 -m http.server` **不送 `Cache-Control` 標頭**，瀏覽器會對 `js/scenarios.js` 套用啟發式快取、
+可能不問伺服器就用舊的。而 `scenario-data.yaml` 是用 `fetch(..., { cache: 'no-cache' })` 抓的，每次都是新的。
+
+**於是會出現「新資料配舊程式」**——症狀是頁面報 `Scenarios.xxx is not a function`。
+解法是強制重新整理（Mac `⌘+Shift+R`、Windows `Ctrl+F5`）。頁面偵測到這種情況時會直接這樣提示你。
+
+想一勞永逸就用會送 no-store 的版本開伺服器：
+
+```bash
+python3 -c "
+import http.server as h, socketserver, functools
+class C(h.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Cache-Control','no-store, must-revalidate'); super().end_headers()
+socketserver.TCPServer.allow_reuse_address = True
+socketserver.TCPServer(('127.0.0.1',8000), C).serve_forever()"
+```
+
 ## 情境（scenario）
 
 面板最上面有一排快捷鈕，點一下套用整組設定並直接產生；滑鼠停留可以看到完整內容。

@@ -560,20 +560,53 @@ function setStatus(msg, isError) {
   status.classList.toggle('error', !!isError);
 }
 
+// index.html 會用到的資料層 API。少一個就代表 js/scenarios.js 是舊版——
+// 通常是瀏覽器拿了快取：YAML 用 no-cache 每次都新的，<script src> 卻可能不問就用舊的，
+// 於是新資料配舊程式，錯誤訊息還會指向完全無關的地方。
+const REQUIRED_SCENARIO_API = [
+  'normalizeScenarios', 'mergeScenarios', 'forExport', 'complicationsOf', 'playableSlides',
+  'exportYaml', 'parseImport', 'segmentOf', 'complicationSegments', 'eligibleAssets',
+  'availableComplications', 'baseCoverage',
+];
+
+function checkScenarioApi() {
+  if (typeof Scenarios === 'undefined') {
+    return 'js/scenarios.js 未載入（確認檔案存在，且是用本地伺服器開啟）';
+  }
+  const missing = REQUIRED_SCENARIO_API.filter(name => typeof Scenarios[name] !== 'function');
+  if (missing.length) {
+    return `js/scenarios.js 是舊版，缺少 ${missing.join('、')}。`
+      + '請強制重新整理清掉快取（Mac：⌘+Shift+R，Windows：Ctrl+F5）';
+  }
+  return null;
+}
+
 async function init() {
+  // 讀檔與後續處理分開接錯：只有真的抓不到檔才該建議「用本地伺服器開啟」。
+  // 混在一起的話，任何錯誤都會被說成伺服器問題，把人指向錯的方向。
+  let text;
   try {
     // no-cache：改完 YAML 重新整理就要看到新資料，不能讀到瀏覽器快取的舊版
     const res = await fetch('scenario-data.yaml', { cache: 'no-cache' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    text = await res.text();
+  } catch (err) {
+    setStatus('讀取 scenario-data.yaml 失敗：' + err.message
+      + '（請用本地伺服器開啟，例如 python3 -m http.server 8000）', true);
+    return;
+  }
+
+  try {
     if (typeof jsyaml === 'undefined') throw new Error('js-yaml 未載入');
-    DATA = jsyaml.load(await res.text());
+    const apiProblem = checkScenarioApi();
+    if (apiProblem) throw new Error(apiProblem);
+    DATA = jsyaml.load(text);
     if (!DATA || !Array.isArray(DATA.assets)) throw new Error('scenario-data.yaml 缺少 assets 陣列');
-    if (typeof Scenarios === 'undefined') throw new Error('js/scenarios.js 未載入');
     buildControls();
     $('btn-gen').disabled = false;
     setStatus(`素材庫已載入：${DATA.assets.length} 筆`);
   } catch (err) {
-    setStatus('讀取 scenario-data.yaml 失敗：' + err.message + '（請用本地伺服器開啟，例如 python3 -m http.server 8000）', true);
+    setStatus('初始化失敗：' + err.message, true);
   }
 }
 
