@@ -16,9 +16,26 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  // 動作型別刻意只有兩種。要加第三種之前，先跑過一輪真實訓練再說——
-  // 通用腳本引擎很好寫，但沒有人知道教官實際需要哪些動作。
-  const ACTION_TYPES = ['complication', 'wait'];
+  // 一頁 = 一組疊起來的圖層，宣告「這頁畫面上有什麼」。
+  //
+  // 順序就是這個陣列的順序，也就是投影視窗寫死的 z-index：
+  //   #projection-stage(底) < patient-layer(1) < complication-layer(2) < message(3)
+  // 所以圖層**不能自由調上下**——順序由型別決定。要改得先重寫 renderer 的層管理。
+  // sound 不是視覺層，但它同樣是「這頁存在的東西」，放同一個清單比另立欄位好懂。
+  const LAYER_TYPES = ['scene', 'patient', 'greenscreen', 'text', 'sound'];
+
+  // 每種圖層的版面預設值。normalize 會補齊，forExport 只寫非預設值——
+  // 否則每個情境檔都會被 size/x/y/tolerance 灌滿，手改時看不出哪裡真的動過。
+  const LAYER_DEFAULTS = {
+    scene: {},
+    patient: { size: 85, x: 50, y: 57 },
+    greenscreen: { size: 70, x: 50, y: 55, tolerance: 40 },
+    text: { size: 40, x: 50, y: 50 },
+    sound: {},
+  };
+
+  // 與主畫面滑桿的 min/max 一致；超出範圍的值會被夾回來而不是整層丟掉
+  const LAYER_RANGES = { size: [10, 100], x: [0, 100], y: [0, 100], tolerance: [5, 60] };
 
   const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
   const asArray = v => (Array.isArray(v) ? v : v == null ? [] : [v]);
@@ -44,17 +61,20 @@
 
   // ---------- 推導 ----------
 
-  // 情境用到哪些突發狀況 = 所有「啟用中」的簡報頁引用到的聯集。
+  // 取某一頁的某種圖層（每種型別一頁最多一個，見 normalizeSlide）
+  function layerOf(slide, type) {
+    return asArray(slide && slide.layers).find(l => l.type === type) || null;
+  }
+
+  // 情境用到哪些突發狀況 = 所有「啟用中」的簡報頁的 greenscreen 圖層的聯集。
   // 不另外存欄位：存了就是第二份真相，遲早出現「勾了但沒有任何一頁用到」的矛盾。
   function complicationsOf(scenario) {
     const seen = [];
     for (const slide of asArray(scenario && scenario.slides)) {
       if (slide.enabled === false) continue;
-      for (const action of asArray(slide.actions)) {
-        if (action && action.type === 'complication' && action.complication
-            && !seen.includes(action.complication)) {
-          seen.push(action.complication);
-        }
+      const layer = layerOf(slide, 'greenscreen');
+      if (layer && layer.complication && !seen.includes(layer.complication)) {
+        seen.push(layer.complication);
       }
     }
     return seen;
@@ -67,34 +87,61 @@
 
   // ---------- 驗證與正規化 ----------
 
-  function normalizeAction(action, sets, where, warn) {
-    if (!isObject(action)) {
-      warn(`${where} 的動作不是物件，已跳過`);
+  // 數值超出滑桿範圍就夾回來，不是整層丟掉——手改 YAML 打錯一個數字
+  // 不該讓整頁消失，那太難查。
+  function clampField(value, key, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    const [min, max] = LAYER_RANGES[key];
+    return Math.max(min, Math.min(max, Math.round(n)));
+  }
+
+  function normalizeLayer(layer, sets, where, warn) {
+    if (!isObject(layer)) {
+      warn(`${where} 的圖層不是物件，已跳過`);
       return null;
     }
-    const type = trimmed(action.type);
-    if (!ACTION_TYPES.includes(type)) {
-      warn(`${where} 的動作型別「${action.type}」不支援（只有 ${ACTION_TYPES.join('／')}），已跳過`);
+    const type = trimmed(layer.type);
+    if (!LAYER_TYPES.includes(type)) {
+      warn(`${where} 的圖層型別「${layer.type}」不支援（只有 ${LAYER_TYPES.join('／')}），已跳過`);
       return null;
     }
-    if (type === 'wait') {
-      const out = { type: 'wait' };
-      if (trimmed(action.note)) out.note = trimmed(action.note);
-      return out;
+
+    const out = { type };
+
+    if (type === 'greenscreen') {
+      const comp = trimmed(layer.complication);
+      if (!comp) {
+        warn(`${where} 的 greenscreen 圖層沒有指定突發狀況，已跳過`);
+        return null;
+      }
+      if (sets.complications.length && !sets.complications.includes(comp)) {
+        warn(`${where} 的突發狀況「${comp}」不在 options 內，已跳過`);
+        return null;
+      }
+      out.complication = comp;
+      // segment 省略 = 該狀況的第一段；填了就釘那一段
+      if (layer.segment !== undefined && layer.segment !== null && layer.segment !== '') {
+        out.segment = String(layer.segment);
+      }
     }
-    const comp = trimmed(action.complication);
-    if (!comp) {
-      warn(`${where} 的 complication 動作沒有指定突發狀況，已跳過`);
-      return null;
+
+    if (type === 'text') {
+      const text = trimmed(layer.text);
+      if (!text) {
+        warn(`${where} 的 text 圖層沒有內容，已跳過`);
+        return null;
+      }
+      out.text = text;
     }
-    if (sets.complications.length && !sets.complications.includes(comp)) {
-      warn(`${where} 的突發狀況「${comp}」不在 options 內，已跳過`);
-      return null;
-    }
-    const out = { type: 'complication', complication: comp };
-    // segment 省略 = 播該狀況的全部片段；填了就只播那一段
-    if (action.segment !== undefined && action.segment !== null && action.segment !== '') {
-      out.segment = String(action.segment);
+
+    // 釘選素材：auto（不填）＝依情境條件挑，重新產生會換；填了就永遠是這一筆。
+    // id 對不對這裡不檢查——資料層看不到素材庫，交給呼叫端在挑素材時處理。
+    if (trimmed(layer.asset)) out.asset = trimmed(layer.asset);
+
+    const defaults = LAYER_DEFAULTS[type];
+    for (const key of Object.keys(defaults)) {
+      out[key] = clampField(layer[key], key, defaults[key]);
     }
     return out;
   }
@@ -106,20 +153,38 @@
     }
     const id = trimmed(slide.id) || `s${index + 1}`;
     const label = `${where} 第 ${index + 1} 頁（${trimmed(slide.title) || id}）`;
-    const actions = asArray(slide.actions)
-      .map(a => normalizeAction(a, sets, label, warn))
-      .filter(Boolean);
-    if (!actions.length) {
-      warn(`${label} 沒有任何有效動作，已跳過`);
+
+    const seen = new Set();
+    const layers = [];
+    for (const raw of asArray(slide.layers)) {
+      const layer = normalizeLayer(raw, sets, label, warn);
+      if (!layer) continue;
+      // 一頁每種型別最多一個：greenscreen 是 renderer 的硬限制（一次只有一個 canvas），
+      // 其餘是刻意簡化——疊兩張病患照沒有人要，卻會讓編輯器多一整層複雜度。
+      if (seen.has(layer.type)) {
+        warn(`${label} 有多個 ${layer.type} 圖層，只保留第一個`);
+        continue;
+      }
+      seen.add(layer.type);
+      layers.push(layer);
+    }
+    if (!layers.length) {
+      warn(`${label} 沒有任何有效圖層，已跳過`);
       return null;
     }
-    return {
+    // 排成固定的 z 順序，資料裡的順序不影響輸出——避免有人以為調換陣列就能改上下層
+    layers.sort((a, b) => LAYER_TYPES.indexOf(a.type) - LAYER_TYPES.indexOf(b.type));
+
+    const out = {
       id,
       title: trimmed(slide.title) || `第 ${index + 1} 頁`,
       // 只有明確寫 false 才是關閉；沒寫視為啟用，這樣手寫 YAML 不必每頁都補 enabled
       enabled: slide.enabled !== false,
-      actions,
+      layers,
     };
+    // 給教官看的提詞，不投影。與 text 圖層是兩件事，混掉會把提詞投到大螢幕上。
+    if (trimmed(slide.note)) out.note = trimmed(slide.note);
+    return out;
   }
 
   // 值對不上 options 的情境整筆跳過：與其載入一半讓人以為選好了，不如當它不存在。
@@ -161,6 +226,11 @@
 
     const out = { id, name: name || id, environment: env, medicalEvent: med, slides };
     if (trimmed(scenario.note)) out.note = trimmed(scenario.note);
+    // 環境聲音放情境層級而不是頁圖層：它是唯一會 loop 的角色
+    // （index.html：el.loop = asset.role === 'ambient_sound'），
+    // 做成頁圖層的話每換一頁就從頭重播，現場聽起來會像斷掉。
+    // 'auto'（預設）＝依情境條件挑；'none'＝這場不要環境聲音；其餘視為素材 id。
+    out.ambience = trimmed(scenario.ambience) || 'auto';
     return out;
   }
 
@@ -210,11 +280,25 @@
     return asArray(scenarios).map(s => {
       const out = { id: s.id, name: s.name, environment: s.environment, medicalEvent: s.medicalEvent };
       if (s.note) out.note = s.note;
+      if (s.ambience && s.ambience !== 'auto') out.ambience = s.ambience;
       out.slides = asArray(s.slides).map(slide => {
         const o = { id: slide.id, title: slide.title };
         // enabled: true 是預設值，不寫進匯出檔，讓人手改時看到的是最小差異
         if (slide.enabled === false) o.enabled = false;
-        o.actions = asArray(slide.actions).map(a => ({ ...a }));
+        if (slide.note) o.note = slide.note;
+        o.layers = asArray(slide.layers).map(layer => {
+          const l = { type: layer.type };
+          if (layer.complication) l.complication = layer.complication;
+          if (layer.segment) l.segment = layer.segment;
+          if (layer.text) l.text = layer.text;
+          if (layer.asset) l.asset = layer.asset;
+          // 只寫跟預設不一樣的版面值，否則每個檔都會被 size/x/y/tolerance 灌滿
+          const defaults = LAYER_DEFAULTS[layer.type] || {};
+          for (const key of Object.keys(defaults)) {
+            if (layer[key] !== undefined && layer[key] !== defaults[key]) l[key] = layer[key];
+          }
+          return l;
+        });
         return o;
       });
       return out;
@@ -250,38 +334,83 @@
     return { ...result, ok: true };
   }
 
-  // ---------- 舊 preset 遷移 ----------
+  // ---------- actions 模型 → 圖層模型 ----------
 
   /**
-   * 把舊的 preset（環境＋事件＋一組突發狀況）轉成情境：每個突發狀況各成一頁，
-   * 順序照原本的陣列順序。轉完的情境推導出的突發狀況集合與原本的 complications 相同。
-   * 前面補一頁 wait，因為原本的 preset 沒有「抵達現場」這個起點，而流程需要一個開頭。
+   * 把舊的 actions 模型轉成圖層模型。
+   *
+   * 核心規則：**一個舊「步驟」＝一個新「頁」**。
+   * 舊模型一頁可以有多個 action，而多片段的突發狀況在執行期還會再被拆成多步
+   * （index.html 的 buildFlowSteps）。那個展開是隱式的、使用者看不到也改不了；
+   * 搬到資料層之後每一段都成為真正的一頁，可以改標題、關掉、排序、加說明文字。
+   *
+   * 因此遷移後的頁數必然等於遷移前的步驟數——這也是驗收的第一條。
+   *
+   * @param assets 需要素材庫才知道某個突發狀況有幾段
    */
-  function fromPreset(preset) {
-    const comps = asArray(preset.complications || preset.complication);
-    const slides = [{
-      id: 's1',
-      title: '抵達現場',
-      enabled: true,
-      actions: [{ type: 'wait', note: preset.note || '教官描述現場、指派任務' }],
-    }];
-    comps.forEach((comp, i) => {
-      slides.push({
-        id: `s${i + 2}`,
-        title: comp,
-        enabled: true,
-        actions: [{ type: 'complication', complication: comp }],
-      });
-    });
-    const out = {
-      id: preset.id || preset.name,
-      name: preset.name,
-      environment: preset.environment,
-      medicalEvent: preset.medicalEvent,
-      slides,
-    };
-    if (preset.note) out.note = preset.note;
+  function migrateScenario(scenario, assets, options) {
+    if (!isObject(scenario)) return scenario;
+    // 已經是圖層模型就原樣返回，重複跑不會壞
+    if (asArray(scenario.slides).some(s => isObject(s) && s.layers)) return scenario;
+
+    const env = trimmed(scenario.environment);
+    const med = trimmed(scenario.medicalEvent);
+    const slides = [];
+
+    for (const old of asArray(scenario.slides)) {
+      if (!isObject(old)) continue;
+      const enabled = old.enabled !== false;
+      const title = trimmed(old.title) || '未命名';
+
+      // 先把這一頁展開成「步驟」，再一步一頁
+      const steps = [];
+      for (const action of asArray(old.actions)) {
+        if (!isObject(action)) continue;
+        if (action.type === 'wait') {
+          steps.push({ wait: true, note: trimmed(action.note) });
+          continue;
+        }
+        const comp = trimmed(action.complication);
+        if (action.type !== 'complication' || !comp) continue;
+        const pinned = action.segment !== undefined && action.segment !== null && action.segment !== '';
+        const segs = pinned
+          ? [String(action.segment)]
+          : complicationSegments(assets, comp, env, med).map(String);
+        segs.forEach((segment, i) => steps.push({
+          comp, segment, part: segs.length > 1 ? `${i + 1}/${segs.length}` : '',
+        }));
+      }
+
+      for (const step of steps) {
+        const slide = {
+          id: `s${slides.length + 1}`,
+          title: step.part ? `${title}（${step.part}）` : title,
+          enabled,
+          // 場景永遠在最底層；病患照片改為預設就在畫面上——
+          // 舊版的「疊加到投影視窗」開關預設關閉、每次都要手動打開，
+          // 圖層模型下「有沒有這一層」就是那個開關，不需要另一個勾選框。
+          layers: [{ type: 'scene' }, { type: 'patient' }],
+        };
+        if (step.wait) {
+          if (step.note) slide.note = step.note;
+        } else {
+          const layer = { type: 'greenscreen', complication: step.comp };
+          // 只有真的多段時才釘 segment。單段的釘上去只是噪音，
+          // 而這個檔案要給人手改、之後還要能 PR 貢獻。
+          if (step.part) layer.segment = step.segment;
+          slide.layers.push(layer);
+        }
+        slides.push(slide);
+      }
+    }
+
+    const out = { ...scenario, slides };
+    delete out.actions;
     return out;
+  }
+
+  function migrateScenarios(raw, assets, options) {
+    return asArray(raw).map(s => migrateScenario(s, assets, options));
   }
 
   // ---------- 素材比對 ----------
@@ -421,7 +550,10 @@
   }
 
   return {
-    ACTION_TYPES,
+    LAYER_TYPES,
+    LAYER_DEFAULTS,
+    LAYER_RANGES,
+    layerOf,
     BASE_ROLES,
     COMPLICATION_ROLES,
     optionSets,
@@ -441,6 +573,7 @@
     forExport,
     exportYaml,
     parseImport,
-    fromPreset,
+    migrateScenario,
+    migrateScenarios,
   };
 });

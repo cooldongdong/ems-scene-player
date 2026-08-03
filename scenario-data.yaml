@@ -54,9 +54,12 @@ options:
 # 情境（scenario）—— 一場訓練的完整劇本：素材組合 ＋ 一串照順序演的簡報頁。
 #
 #   為什麼要有這一層：
-#   ① 三個選單可以排出 5×6 = 30 種基本組合，但素材庫不是每一格都填滿，選到沒素材的格子
-#      只會看到「查無符合的素材」。情境是「這組確定跑得動」的人工背書名單。
+#   ① 三個選單可以排出 5×6 = 30 種基本組合，但素材庫不是每一格都填滿。情境是
+#      「這組確定跑得動」的人工背書名單。
 #   ② 光有素材還不夠——訓練需要的是「先發生什麼、再發生什麼」。slides 就是那條時間線。
+#
+#   一頁 = 一組疊起來的圖層（layers），宣告「這一頁畫面上有什麼」。
+#   播放就是換頁：按一次前進換一頁，教官決定節奏。
 #
 #   編輯規則：
 #   1. 整段 scenarios 可以直接刪掉，頁面會自動不顯示情境清單，不影響其他功能。
@@ -65,24 +68,44 @@ options:
 #   3. name 是清單上的字，越短越好；note 會變成滑鼠停留時的說明，可省略。
 #   4. environment／medicalEvent 的值必須和上面 options 完全一致，對不上整筆會被跳過。
 #   5. **不要寫 complications 欄位。** 這個情境用到哪些突發狀況，是從所有「啟用中」的
-#      簡報頁自動推導出來的。多寫一份就是第二份真相，遲早出現「勾了但沒有任何一頁用到」
-#      或反過來的矛盾。
-#   6. 每個情境至少要有一頁有效的簡報頁，否則整筆會被跳過——空流程的情境載入後是一片
-#      空白，比不存在更難懂。
+#      簡報頁的 greenscreen 圖層自動推導出來的。多寫一份就是第二份真相。
+#   6. 每個情境至少要有一頁、每頁至少要有一個圖層，否則會被跳過——空白的頁比不存在更難懂。
+#   7. ambience＝整場的環境聲音，預設 auto（依情境條件挑）。填 none 就是這場不要環境聲音。
+#      它放在情境層級而不是頁圖層，因為環境聲音是唯一會 loop 的角色；做成頁圖層的話
+#      每換一頁就會從頭重播，現場聽起來會像斷掉。
 #
 #   簡報頁（slides）：
 #   - id：情境內唯一即可，省略時自動編成 s1、s2……
 #   - title：清單上顯示的字
+#   - note：**給教官看的提詞，不會投影出去。** 要投影給學員看的字請用 text 圖層——
+#     這兩個混掉的後果是把教官的提詞投到大螢幕上。
 #   - enabled：只有明確寫 false 才是關閉。關掉的頁**播放時會跳過，但仍留在清單裡**，
-#     用途是現場臨時抽掉一個橋段，不必真的刪掉它。省略視為啟用，手寫時不必每頁都補。
-#   - actions：這一頁要發生的事，目前只支援兩種型別（刻意收斂，先跑過真實訓練再考慮加）：
-#       type: wait          停住等教官口述，可用 note 寫提示
-#       type: complication  播某個突發狀況；complication 填狀況名稱，
-#                           另可填 segment 只播其中一段（省略＝該狀況的全部片段）
+#     用途是現場臨時抽掉一個橋段，不必真的刪掉它。省略視為啟用。
+#
+#   圖層（layers）——**順序由型別決定，寫在陣列裡的順序不影響輸出**：
+#
+#       scene       環境（最底層，滿版）
+#       patient     病患照片          size／x／y
+#       greenscreen 去背人物          complication（必填）、segment、size／x／y／tolerance
+#       text        投影給學員看的字   text（必填）、size／x／y
+#       sound       這一頁要播的聲音（非視覺層）
+#
+#   每種型別一頁最多一個。greenscreen 是硬限制（投影視窗一次只有一個 canvas），
+#   其餘是刻意簡化。上下層順序不能自訂，因為投影視窗的 z-index 是寫死的。
+#
+#   每個圖層可以填 asset: <素材 id> 把素材釘死；不填就是 auto——依情境條件挑，
+#   重新產生會換一張。要所見即所得地排版就釘選，要每次有點變化就留 auto。
+#
+#   size／x／y／tolerance 省略時用預設值（patient 85/50/57、greenscreen 70/50/55/40、
+#   text 40/50/50），所以只需要寫你真的調過的那幾個。
+#
+#   多片段的突發狀況（例如「肇事雙方爭吵」有 3 段）**展開成連續多頁**，各釘一個 segment。
+#   圖層是靜態的，描述不了「演完第一段換第二段」；展開成頁之後，每一段都可以
+#   改標題、關掉、排序、加自己的說明文字。
 #
 #   下列 7 組的來源：把 30 種基本組合逐一比對素材庫後，四個角色（環境影像、環境聲音、
-#   病患照片、病患聲音）都取得到素材的就是這 7 組；其餘 23 組至少缺一項，多半缺病患照片。
-#   這只代表「素材齊全」，不代表「情境合理」——實際播過覺得不合適就直接改掉那一筆。
+#   病患照片、病患聲音）都取得到素材的就是這 7 組。這只代表「素材齊全」，不代表
+#   「情境合理」——實際播過覺得不合適就直接改掉那一筆。
 scenarios:
   - id: home-ohca
     name: 住宅 OHCA
@@ -92,15 +115,17 @@ scenarios:
     slides:
       - id: s1
         title: 抵達現場
-        actions:
-          - type: wait
-            note: 描述現場、指派任務，等隊員完成初步評估
+        note: 描述現場、指派任務，等隊員完成初步評估
+        layers:
+          - type: scene
+          - type: patient
       - id: s2
         title: 家屬崩潰哭喊
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 家屬崩潰哭喊
-
   - id: studio-selfharm
     name: 套房自傷
     environment: 出租套房
@@ -109,15 +134,17 @@ scenarios:
     slides:
       - id: s1
         title: 抵達現場
-        actions:
-          - type: wait
-            note: 描述現場、確認環境安全再接近患者
+        note: 描述現場、確認環境安全再接近患者
+        layers:
+          - type: scene
+          - type: patient
       - id: s2
         title: 情緒失控自傷
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 情緒失控自傷
-
   - id: street-trauma
     name: 街頭外傷
     environment: 市區街道
@@ -126,20 +153,24 @@ scenarios:
     slides:
       - id: s1
         title: 抵達現場
-        actions:
-          - type: wait
-            note: 描述現場、指派任務，開始止血
+        note: 描述現場、指派任務，開始止血
+        layers:
+          - type: scene
+          - type: patient
       - id: s2
         title: 旁人嗆聲干擾
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 旁人嗆聲干擾
       - id: s3
         title: 同事想搬動傷患
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 同事欲搬動傷患
-
   - id: street-fall
     name: 街頭墜落骨折
     environment: 市區街道
@@ -148,15 +179,17 @@ scenarios:
     slides:
       - id: s1
         title: 抵達現場
-        actions:
-          - type: wait
-            note: 描述現場、評估墜落高度與可能的脊椎傷害
+        note: 描述現場、評估墜落高度與可能的脊椎傷害
+        layers:
+          - type: scene
+          - type: patient
       - id: s2
         title: 同事想搬動傷患
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 同事欲搬動傷患
-
   - id: intersection-crash
     name: 路口車禍
     environment: 市區街道
@@ -165,20 +198,41 @@ scenarios:
     slides:
       - id: s1
         title: 抵達現場
-        actions:
-          - type: wait
-            note: 描述現場、確認交通管制與傷患人數
+        note: 描述現場、確認交通管制與傷患人數
+        layers:
+          - type: scene
+          - type: patient
       - id: s2
-        title: 肇事雙方爭吵
-        actions:
-          - type: complication
+        title: 肇事雙方爭吵（1/3）
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 肇事雙方爭吵
+            segment: '1'
       - id: s3
+        title: 肇事雙方爭吵（2/3）
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
+            complication: 肇事雙方爭吵
+            segment: '2'
+      - id: s4
+        title: 肇事雙方爭吵（3/3）
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
+            complication: 肇事雙方爭吵
+            segment: '3'
+      - id: s5
         title: 旁人嗆聲干擾
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 旁人嗆聲干擾
-
   - id: site-trauma
     name: 工地外傷
     environment: 工地
@@ -187,20 +241,24 @@ scenarios:
     slides:
       - id: s1
         title: 抵達現場
-        actions:
-          - type: wait
-            note: 描述現場、確認工地危害與動線
+        note: 描述現場、確認工地危害與動線
+        layers:
+          - type: scene
+          - type: patient
       - id: s2
         title: 同事想搬動傷患
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 同事欲搬動傷患
       - id: s3
         title: 旁人嗆聲干擾
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 旁人嗆聲干擾
-
   - id: site-fall
     name: 工地墜落
     environment: 工地
@@ -209,15 +267,17 @@ scenarios:
     slides:
       - id: s1
         title: 抵達現場
-        actions:
-          - type: wait
-            note: 描述現場、評估墜落高度與固定需求
+        note: 描述現場、評估墜落高度與固定需求
+        layers:
+          - type: scene
+          - type: patient
       - id: s2
         title: 同事想搬動傷患
-        actions:
-          - type: complication
+        layers:
+          - type: scene
+          - type: patient
+          - type: greenscreen
             complication: 同事欲搬動傷患
-
 
 assets:
   # ---------- 環境影像 ----------

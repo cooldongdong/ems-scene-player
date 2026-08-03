@@ -37,12 +37,38 @@ test('每個情境的 id 都是唯一且為 ASCII kebab-case', () => {
   }
 });
 
-test('每個情境至少有一頁，且第一頁是 wait（流程要有起點）', () => {
+test('每頁都有 scene 圖層——場景是最底層，不該有哪一頁沒有背景', () => {
   const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
   for (const s of scenarios) {
     assert.ok(s.slides.length >= 1, `${s.name} 沒有簡報頁`);
-    assert.equal(s.slides[0].actions[0].type, 'wait', `${s.name} 第一頁不是 wait`);
+    for (const slide of s.slides) {
+      assert.ok(S.layerOf(slide, 'scene'), `${s.name}／${slide.title} 沒有 scene 圖層`);
+    }
   }
+});
+
+test('第一頁是純場景（沒有綠幕人物），流程要有一個乾淨的起點', () => {
+  const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  for (const s of scenarios) {
+    assert.equal(S.layerOf(s.slides[0], 'greenscreen'), null, `${s.name} 第一頁就有綠幕人物`);
+  }
+});
+
+test('圖層一律排成固定的 z 順序，資料裡的順序不影響輸出', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{
+      id: 's1', title: 'a',
+      // 故意倒過來寫
+      layers: [
+        { type: 'greenscreen', complication: '旁人嗆聲干擾' },
+        { type: 'patient' },
+        { type: 'scene' },
+      ],
+    }],
+  }], OPTIONS);
+  assert.deepEqual(scenarios[0].slides[0].layers.map(l => l.type),
+    ['scene', 'patient', 'greenscreen']);
 });
 
 // 這組數字來自轉換前的 preset，是這次遷移不能改動的事實
@@ -69,8 +95,8 @@ test('關掉的頁不列入突發狀況的推導，也不會被播放', () => {
   const scenario = {
     id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
     slides: [
-      { id: 'a', title: 'a', enabled: true, actions: [{ type: 'complication', complication: '旁人嗆聲干擾' }] },
-      { id: 'b', title: 'b', enabled: false, actions: [{ type: 'complication', complication: '同事欲搬動傷患' }] },
+      { id: 'a', title: 'a', enabled: true, layers: [{ type: 'greenscreen', complication: '旁人嗆聲干擾' }] },
+      { id: 'b', title: 'b', enabled: false, layers: [{ type: 'greenscreen', complication: '同事欲搬動傷患' }] },
     ],
   };
   assert.deepEqual(S.complicationsOf(scenario), ['旁人嗆聲干擾']);
@@ -81,8 +107,8 @@ test('關掉的頁仍留在清單裡（是跳過，不是刪除）', () => {
   const { scenarios } = S.normalizeScenarios([{
     id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
     slides: [
-      { id: 'a', title: 'a', actions: [{ type: 'wait' }] },
-      { id: 'b', title: 'b', enabled: false, actions: [{ type: 'complication', complication: '旁人嗆聲干擾' }] },
+      { id: 'a', title: 'a', layers: [{ type: 'scene' }] },
+      { id: 'b', title: 'b', enabled: false, layers: [{ type: 'greenscreen', complication: '旁人嗆聲干擾' }] },
     ],
   }], OPTIONS);
   assert.equal(scenarios[0].slides.length, 2);
@@ -92,9 +118,9 @@ test('關掉的頁仍留在清單裡（是跳過，不是刪除）', () => {
 test('同一個突發狀況出現在多頁時，推導結果只算一次且保留首次出現的順序', () => {
   const scenario = {
     slides: [
-      { actions: [{ type: 'complication', complication: '旁人嗆聲干擾' }] },
-      { actions: [{ type: 'complication', complication: '同事欲搬動傷患' }] },
-      { actions: [{ type: 'complication', complication: '旁人嗆聲干擾' }] },
+      { layers: [{ type: 'greenscreen', complication: '旁人嗆聲干擾' }] },
+      { layers: [{ type: 'greenscreen', complication: '同事欲搬動傷患' }] },
+      { layers: [{ type: 'greenscreen', complication: '旁人嗆聲干擾' }] },
     ],
   };
   assert.deepEqual(S.complicationsOf(scenario), ['旁人嗆聲干擾', '同事欲搬動傷患']);
@@ -103,9 +129,93 @@ test('同一個突發狀況出現在多頁時，推導結果只算一次且保�
 test('enabled 省略時視為啟用', () => {
   const { scenarios } = S.normalizeScenarios([{
     id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
-    slides: [{ id: 'a', title: 'a', actions: [{ type: 'wait' }] }],
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'scene' }] }],
   }], OPTIONS);
   assert.equal(scenarios[0].slides[0].enabled, true);
+});
+
+// ---------- 圖層 ----------
+
+test('版面值省略時補預設，且只補該型別有的欄位', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'scene' }, { type: 'patient' },
+      { type: 'greenscreen', complication: '旁人嗆聲干擾' },
+    ] }],
+  }], OPTIONS);
+  const [scene, patient, green] = scenarios[0].slides[0].layers;
+  assert.deepEqual(scene, { type: 'scene' });                    // 場景滿版，沒有位置欄位
+  assert.deepEqual(patient, { type: 'patient', ...S.LAYER_DEFAULTS.patient });
+  assert.equal(green.tolerance, S.LAYER_DEFAULTS.greenscreen.tolerance);
+});
+
+test('超出滑桿範圍的版面值被夾回來，不是整層丟掉', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'patient', size: 999, x: -50, y: 'abc' }] }],
+  }], OPTIONS);
+  const p = scenarios[0].slides[0].layers[0];
+  assert.equal(p.size, S.LAYER_RANGES.size[1]);
+  assert.equal(p.x, S.LAYER_RANGES.x[0]);
+  assert.equal(p.y, S.LAYER_DEFAULTS.patient.y, '非數字要回到預設值');
+});
+
+test('一頁每種圖層最多一個，多的丟掉並警告', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', size: 50 }, { type: 'patient', size: 90 },
+    ] }],
+  }], OPTIONS);
+  assert.equal(scenarios[0].slides[0].layers.length, 1);
+  assert.equal(scenarios[0].slides[0].layers[0].size, 50, '保留第一個');
+  assert.match(warnings.join(''), /多個 patient/);
+});
+
+test('text 圖層沒有內容就跳過；有內容才留下', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [
+      { id: 'a', title: 'a', layers: [{ type: 'scene' }, { type: 'text', text: '  ' }] },
+      { id: 'b', title: 'b', layers: [{ type: 'scene' }, { type: 'text', text: '準備交班' }] },
+    ],
+  }], OPTIONS);
+  assert.equal(S.layerOf(scenarios[0].slides[0], 'text'), null);
+  assert.equal(S.layerOf(scenarios[0].slides[1], 'text').text, '準備交班');
+  assert.match(warnings.join(''), /text 圖層沒有內容/);
+});
+
+test('slide.note 是給教官的提詞，不會變成 text 圖層', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', note: '提醒隊員注意工地危害', layers: [{ type: 'scene' }] }],
+  }], OPTIONS);
+  const slide = scenarios[0].slides[0];
+  assert.equal(slide.note, '提醒隊員注意工地危害');
+  assert.equal(S.layerOf(slide, 'text'), null, 'note 絕不能變成投影出去的字');
+});
+
+test('釘選素材（asset）被保留；不填就是 auto', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'scene', asset: 'ev005' }, { type: 'patient' },
+    ] }],
+  }], OPTIONS);
+  assert.equal(S.layerOf(scenarios[0].slides[0], 'scene').asset, 'ev005');
+  assert.equal(S.layerOf(scenarios[0].slides[0], 'patient').asset, undefined);
+});
+
+test('ambience 預設 auto，可指定 none', () => {
+  const { scenarios } = S.normalizeScenarios([
+    { id: 'a', name: 'a', environment: '工地', medicalEvent: '外傷出血',
+      slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] },
+    { id: 'b', name: 'b', environment: '工地', medicalEvent: '外傷出血', ambience: 'none',
+      slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] },
+  ], OPTIONS);
+  assert.equal(scenarios[0].ambience, 'auto');
+  assert.equal(scenarios[1].ambience, 'none');
 });
 
 // ---------- 壞資料 ----------
@@ -113,16 +223,16 @@ test('enabled 省略時視為啟用', () => {
 test('壞資料被跳過並留警告，不會讓整份載入失敗', () => {
   const raw = [
     { id: 'good', name: '好的', environment: '工地', medicalEvent: '外傷出血',
-      slides: [{ id: 's1', title: 'a', actions: [{ type: 'wait' }] }] },
+      slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] },
     { id: 'bad-env', name: '壞環境', environment: '不存在的環境', medicalEvent: '外傷出血',
-      slides: [{ id: 's1', title: 'a', actions: [{ type: 'wait' }] }] },
+      slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] },
     { id: 'bad-med', name: '壞事件', environment: '工地', medicalEvent: '不存在的事件',
-      slides: [{ id: 's1', title: 'a', actions: [{ type: 'wait' }] }] },
+      slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] },
     { id: 'no-slides', name: '空流程', environment: '工地', medicalEvent: '外傷出血', slides: [] },
     { id: 'bad-comp', name: '壞狀況', environment: '工地', medicalEvent: '外傷出血',
-      slides: [{ id: 's1', title: 'a', actions: [{ type: 'complication', complication: '沒這個狀況' }] }] },
+      slides: [{ id: 's1', title: 'a', layers: [{ type: 'greenscreen', complication: '沒這個狀況' }] }] },
     { id: 'bad-type', name: '壞型別', environment: '工地', medicalEvent: '外傷出血',
-      slides: [{ id: 's1', title: 'a', actions: [{ type: 'explode' }] }] },
+      slides: [{ id: 's1', title: 'a', layers: [{ type: 'explode' }] }] },
   ];
   const { scenarios, warnings } = S.normalizeScenarios(raw, OPTIONS);
   assert.deepEqual(scenarios.map(s => s.id), ['good']);
@@ -131,7 +241,7 @@ test('壞資料被跳過並留警告，不會讓整份載入失敗', () => {
 
 test('id 重複時保留第一筆並警告', () => {
   const one = { id: 'dup', name: 'A', environment: '工地', medicalEvent: '外傷出血',
-    slides: [{ id: 's1', title: 'a', actions: [{ type: 'wait' }] }] };
+    slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] };
   const two = { ...one, name: 'B' };
   const { scenarios, warnings } = S.normalizeScenarios([one, two], OPTIONS);
   assert.equal(scenarios.length, 1);
@@ -139,10 +249,10 @@ test('id 重複時保留第一筆並警告', () => {
   assert.match(warnings.join(''), /重複/);
 });
 
-test('沒有任何有效動作的頁會被丟掉；整個情境因此變空時整筆跳過', () => {
+test('沒有任何有效圖層的頁會被丟掉；整個情境因此變空時整筆跳過', () => {
   const { scenarios, warnings } = S.normalizeScenarios([{
     id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
-    slides: [{ id: 's1', title: 'a', actions: [{ type: 'explode' }] }],
+    slides: [{ id: 's1', title: 'a', layers: [{ type: 'explode' }] }],
   }], OPTIONS);
   assert.deepEqual(scenarios, []);
   assert.match(warnings.join(''), /沒有任何有效簡報頁/);
@@ -198,8 +308,8 @@ test('關掉的頁在匯出檔裡要寫出 enabled: false，往返才不會被�
   const { scenarios } = S.normalizeScenarios([{
     id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
     slides: [
-      { id: 'a', title: 'a', actions: [{ type: 'wait' }] },
-      { id: 'b', title: 'b', enabled: false, actions: [{ type: 'complication', complication: '旁人嗆聲干擾' }] },
+      { id: 'a', title: 'a', layers: [{ type: 'scene' }] },
+      { id: 'b', title: 'b', enabled: false, layers: [{ type: 'greenscreen', complication: '旁人嗆聲干擾' }] },
     ],
   }], OPTIONS);
   const text = S.exportYaml(scenarios, yaml.dump);
@@ -238,9 +348,9 @@ test('匯入的檔案裡有壞資料時，好的留下、壞的被跳過並警�
   const text = yaml.dump({
     scenarios: [
       { id: 'ok', name: '好的', environment: '工地', medicalEvent: '外傷出血',
-        slides: [{ id: 's1', title: 'a', actions: [{ type: 'wait' }] }] },
+        slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] },
       { id: 'ng', name: '壞的', environment: '火星', medicalEvent: '外傷出血',
-        slides: [{ id: 's1', title: 'a', actions: [{ type: 'wait' }] }] },
+        slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] },
     ],
   });
   const back = S.parseImport(text, OPTIONS, yaml.load);
@@ -354,20 +464,95 @@ test('內建 7 組情境用到的突發狀況，在各自的環境×事件下全
   }
 });
 
-// ---------- preset 遷移函式 ----------
+// ---------- actions 模型 → 圖層模型的遷移 ----------
+//
+// 驗收只有一條：遷移前後，把情境從頭播到尾看到的東西一樣。
+// 舊模型的「一個步驟」就是新模型的「一頁」，所以頁數必須等於步驟數。
 
-test('fromPreset 轉出的情境，推導出的突發狀況與原 preset 相同', () => {
-  const preset = { name: '測試', environment: '工地', medicalEvent: '外傷出血',
-    complications: ['旁人嗆聲干擾', '同事欲搬動傷患'], note: '說明' };
-  const scenario = S.fromPreset(preset);
-  assert.deepEqual(S.complicationsOf(scenario), preset.complications);
-  assert.equal(scenario.slides.length, 3);   // wait 起點 ＋ 兩個突發狀況
+// 複製 index.html 舊版 buildFlowSteps 的邏輯，作為遷移的對照組
+function 舊模型的步驟(scenario, assets) {
+  const out = [];
+  for (const slide of (scenario.slides || []).filter(s => s.enabled !== false)) {
+    for (const action of slide.actions || []) {
+      if (action.type === 'wait') { out.push('wait'); continue; }
+      if (action.type !== 'complication') continue;
+      const segs = action.segment != null && action.segment !== ''
+        ? [String(action.segment)]
+        : S.complicationSegments(assets, action.complication, scenario.environment, scenario.medicalEvent).map(String);
+      segs.forEach(sg => out.push(`${action.complication}#${sg}`));
+    }
+  }
+  return out;
+}
+
+function 新模型的序列(scenario) {
+  return S.playableSlides(scenario).map(slide => {
+    const g = S.layerOf(slide, 'greenscreen');
+    return g ? `${g.complication}#${g.segment || '1'}` : 'wait';
+  });
+}
+
+const 舊格式的情境 = {
+  id: 'x', name: '測試', environment: '市區街道', medicalEvent: '車禍多重傷',
+  slides: [
+    { id: 's1', title: '抵達現場', actions: [{ type: 'wait', note: '描述現場' }] },
+    { id: 's2', title: '肇事雙方爭吵', actions: [{ type: 'complication', complication: '肇事雙方爭吵' }] },
+    { id: 's3', title: '旁人插話', enabled: false, actions: [{ type: 'complication', complication: '旁人嗆聲干擾' }] },
+  ],
+};
+
+test('遷移：播放序列逐步相同，頁數＝舊模型的步驟數', () => {
+  const migrated = S.migrateScenario(舊格式的情境, DATA.assets, OPTIONS);
+  const { scenarios, warnings } = S.normalizeScenarios([migrated], OPTIONS);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(新模型的序列(scenarios[0]), 舊模型的步驟(舊格式的情境, DATA.assets));
 });
 
-test('沒有突發狀況的 preset 轉出來仍有一頁 wait，不會變成空流程', () => {
-  const scenario = S.fromPreset({ name: '純環境', environment: '工地', medicalEvent: '外傷出血' });
-  assert.equal(scenario.slides.length, 1);
-  assert.deepEqual(S.complicationsOf(scenario), []);
-  const { scenarios, warnings } = S.normalizeScenarios([scenario], OPTIONS);
-  assert.equal(scenarios.length, 1, warnings.join(''));
+test('遷移：多片段的突發狀況展開成多頁，標題帶 (n/m)', () => {
+  const migrated = S.migrateScenario(舊格式的情境, DATA.assets, OPTIONS);
+  // 肇事雙方爭吵在市區街道＋車禍多重傷下有 3 段
+  const titles = migrated.slides.map(s => s.title);
+  assert.equal(titles.filter(t => t.startsWith('肇事雙方爭吵')).length, 3);
+  assert.ok(titles.includes('肇事雙方爭吵（2/3）'), titles.join(' / '));
+});
+
+test('遷移：單片段不釘 segment（避免噪音），多片段才釘', () => {
+  const migrated = S.migrateScenario(舊格式的情境, DATA.assets, OPTIONS);
+  const many = migrated.slides.find(s => s.title === '肇事雙方爭吵（1/3）');
+  const one = migrated.slides.find(s => s.title === '旁人插話');
+  assert.equal(S.layerOf(many, 'greenscreen').segment, '1');
+  assert.equal(S.layerOf(one, 'greenscreen').segment, undefined);
+});
+
+test('遷移：wait 的 note 變成 slide.note，不會變成投影出去的 text 圖層', () => {
+  const migrated = S.migrateScenario(舊格式的情境, DATA.assets, OPTIONS);
+  assert.equal(migrated.slides[0].note, '描述現場');
+  assert.equal(S.layerOf(migrated.slides[0], 'text'), undefined);
+});
+
+test('遷移：關掉的頁展開後每一頁都仍是關閉', () => {
+  const migrated = S.migrateScenario(舊格式的情境, DATA.assets, OPTIONS);
+  const off = migrated.slides.filter(s => s.enabled === false);
+  assert.equal(off.length, 1);
+  assert.equal(off[0].title, '旁人插話');
+});
+
+test('遷移：每頁都補上 scene 與 patient 圖層', () => {
+  const migrated = S.migrateScenario(舊格式的情境, DATA.assets, OPTIONS);
+  for (const slide of migrated.slides) {
+    assert.deepEqual(slide.layers.slice(0, 2).map(l => l.type), ['scene', 'patient']);
+  }
+});
+
+test('遷移是冪等的：已經是圖層模型的資料再跑一次不會變', () => {
+  const once = S.migrateScenario(舊格式的情境, DATA.assets, OPTIONS);
+  const twice = S.migrateScenario(once, DATA.assets, OPTIONS);
+  assert.deepEqual(twice, once);
+});
+
+test('遷移：scenario-data.yaml 已經是圖層模型，不含任何 actions', () => {
+  assert.equal(JSON.stringify(DATA.scenarios).includes('"actions"'), false);
+  for (const s of DATA.scenarios) {
+    for (const slide of s.slides) assert.ok(Array.isArray(slide.layers), `${s.id}/${slide.id} 沒有 layers`);
+  }
 });

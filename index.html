@@ -134,6 +134,7 @@
   .edit-action select { width: auto; flex: none; }
   .edit-action input { flex: 1 1 140px; min-width: 100px; }
   .edit-action input.edit-seg { flex: 0 1 130px; }
+  .layer-name { flex: 0 0 68px; font-size: 13px; color: var(--muted); }
   .edit-tools { display: flex; gap: 4px; margin-left: auto; flex: none; }
   .edit-tools .flow-btn { font-size: 13px; padding: 5px 9px; }
   .edit-danger { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -816,56 +817,62 @@ function syncScenarioActive() {
 
 // ---------- 流程引擎 ----------
 
-// 一個「步驟」是按一次前進會發生的事。多片段的突發狀況會展開成多個步驟——
-// 既有 UI 本來就是一段一段播的，一頁只播第一段會讓後面幾段永遠播不到。
+// **一頁＝一步。** 舊模型要在這裡把多片段的突發狀況展開成多步；圖層模型下那個展開
+// 已經發生在資料層（migrateScenario），每一段都是真正的一頁，所以這裡只剩「會播的頁」。
 let flowSteps = [];
 
 function buildFlowSteps() {
-  flowSteps = [];
-  if (!currentScenario) return;
-  const env = $('sel-env').value;
-  const med = $('sel-med').value;
-
-  Scenarios.playableSlides(currentScenario).forEach((slide, slideIndex) => {
-    for (const action of slide.actions) {
-      if (action.type === 'wait') {
-        flowSteps.push({ slideIndex, slideId: slide.id, title: slide.title, kind: 'wait', note: action.note || '' });
-        continue;
-      }
-      const segments = action.segment !== undefined && action.segment !== null
-        ? [action.segment]
-        : complicationSegments(action.complication, env, med);
-      segments.forEach((segment, i) => {
-        flowSteps.push({
-          slideIndex, slideId: slide.id, title: slide.title,
-          kind: 'complication', comp: action.complication, segment,
-          part: segments.length > 1 ? `${i + 1}/${segments.length}` : '',
-        });
-      });
-    }
-  });
+  flowSteps = currentScenario ? Scenarios.playableSlides(currentScenario) : [];
 }
 
-function stepLabel(step) {
-  if (!step) return '';
-  if (step.kind === 'wait') return step.note || '等教官口述';
-  return step.comp + (step.part ? `　片段 ${step.part}` : '');
+// 這一頁畫面上有什麼——講給教官聽的一句話
+function stepLabel(slide) {
+  if (!slide) return '';
+  const green = Scenarios.layerOf(slide, 'greenscreen');
+  const text = Scenarios.layerOf(slide, 'text');
+  const parts = [];
+  if (green) parts.push(green.complication + (green.segment ? `　片段 ${green.segment}` : ''));
+  if (text) parts.push(`字幕：${text.text}`);
+  if (slide.note) parts.push(slide.note);
+  return parts.join('　·　') || '只有場景';
 }
 
-function runStep(step) {
-  if (!step) return;
-  if (step.kind === 'wait') {
-    // 停住的頁不該讓上一段的人物還站在畫面上
+function runStep(slide) {
+  if (!slide) return;
+  const green = Scenarios.layerOf(slide, 'greenscreen');
+  if (!green) {
+    // 沒有綠幕圖層的頁不該讓上一頁的人物還站在畫面上
     stopMediaIn($('comp-groups'));
     stopComplicationProjection();
+    renderProjectionText(slide);
     return;
   }
-  const play = segmentPlayers.get(segmentKey(step.comp, step.segment));
-  if (play) { play(); return; }
+  // segment 省略＝第一段（與資料層的規則一致）
+  const segment = green.segment || complicationSegments(green.complication,
+    $('sel-env').value, $('sel-med').value)[0];
+  const play = segmentPlayers.get(segmentKey(green.complication, segment));
+  if (play) { play(); renderProjectionText(slide); return; }
   // 素材缺了不能靜靜跳過——教官會以為自己按錯
   stopMediaIn($('comp-groups'));
   stopComplicationProjection();
-  setStatus(`這一步的素材不存在：${step.comp}${step.part ? ` 片段 ${step.part}` : ''}`, true);
+  setStatus(`這一頁的素材不存在：${green.complication}${green.segment ? ` 片段 ${green.segment}` : ''}`, true);
+}
+
+// text 圖層＝投影給學員看的字。與 slide.note（給教官的提詞）是兩件事，
+// 混掉的後果是把提詞投到大螢幕上，所以這裡只讀 text 圖層。
+function renderProjectionText(slide) {
+  const doc = projectionDocument();
+  if (!doc) return;
+  const box = doc.getElementById('projection-message');
+  const layer = slide && Scenarios.layerOf(slide, 'text');
+  if (!layer) { box.style.display = 'none'; box.textContent = ''; return; }
+  box.textContent = layer.text;
+  box.style.display = 'grid';
+  box.style.background = 'transparent';
+  box.style.placeItems = 'center';
+  box.style.fontSize = `clamp(18px, ${layer.size / 10}vw, 96px)`;
+  box.style.left = 0;
+  box.style.top = `${layer.y - 50}%`;
 }
 
 function gotoFlow(index) {
@@ -934,8 +941,8 @@ function addSlide() {
     id: nextSlideId(currentScenario),
     title: `第 ${currentScenario.slides.length + 1} 頁`,
     enabled: true,
-    // 新頁先給一個 wait：沒有動作的頁在資料層會被丟掉，等於按了沒反應
-    actions: [{ type: 'wait', note: '' }],
+    // 新頁先給場景＋病患：沒有圖層的頁在資料層會被丟掉，等於按了沒反應
+    layers: [newLayer('scene'), newLayer('patient')],
   };
   currentScenario.slides.push(slide);
   editingSlideId = slide.id;
@@ -976,55 +983,57 @@ function moveSlide(slideId, toIndex) {
   persistScenarioEdit();
 }
 
-// ---------- 編輯：動作 ----------
+// ---------- 編輯：圖層 ----------
 
 function editingSlide() {
   return currentScenario && currentScenario.slides.find(s => s.id === editingSlideId);
 }
 
-function addAction(type) {
-  const slide = editingSlide();
-  if (!slide) return;
-  slide.actions.push(type === 'wait'
-    ? { type: 'wait', note: '' }
-    : { type: 'complication', complication: firstUsableComplication() });
-  persistScenarioEdit();
+// 圖層上下順序由型別決定（投影視窗的 z-index 是寫死的），所以新增後一律重排，
+// 不提供拖曳把手——做一個拖了卻沒效果的介面比不做更糟。
+function sortLayers(slide) {
+  slide.layers.sort((a, b) =>
+    Scenarios.LAYER_TYPES.indexOf(a.type) - Scenarios.LAYER_TYPES.indexOf(b.type));
 }
 
-function removeAction(index) {
+function newLayer(type) {
+  const layer = { type, ...Scenarios.LAYER_DEFAULTS[type] };
+  if (type === 'greenscreen') layer.complication = firstUsableComplication();
+  if (type === 'text') layer.text = '說明文字';
+  return layer;
+}
+
+function addLayer(type) {
   const slide = editingSlide();
   if (!slide) return;
-  if (slide.actions.length <= 1) {
-    setStatus('每頁至少要有一個動作——沒有動作的頁會被資料層丟掉。', true);
+  if (Scenarios.layerOf(slide, type)) {
+    setStatus(`這一頁已經有一個 ${type} 圖層——每種型別一頁只能有一個。`, true);
     return;
   }
-  slide.actions.splice(index, 1);
+  slide.layers.push(newLayer(type));
+  sortLayers(slide);
   persistScenarioEdit();
 }
 
-function moveAction(index, delta) {
+function removeLayer(type) {
   const slide = editingSlide();
   if (!slide) return;
-  const to = index + delta;
-  if (to < 0 || to >= slide.actions.length) return;
-  const [a] = slide.actions.splice(index, 1);
-  slide.actions.splice(to, 0, a);
+  if (slide.layers.length <= 1) {
+    setStatus('每頁至少要留一個圖層——沒有圖層的頁會被資料層丟掉。', true);
+    return;
+  }
+  slide.layers = slide.layers.filter(l => l.type !== type);
   persistScenarioEdit();
 }
 
-function updateAction(index, patch) {
+function updateLayer(type, patch) {
   const slide = editingSlide();
-  if (!slide || !slide.actions[index]) return;
-  const action = slide.actions[index];
-  if (patch.type && patch.type !== action.type) {
-    // 換型別等於換一個動作，殘留的舊欄位會被資料層當成雜訊
-    slide.actions[index] = patch.type === 'wait'
-      ? { type: 'wait', note: '' }
-      : { type: 'complication', complication: firstUsableComplication() };
-  } else {
-    Object.assign(action, patch);
-    if (action.type === 'complication' && !action.segment) delete action.segment;
-    if (action.type === 'wait' && !action.note) delete action.note;
+  const layer = slide && Scenarios.layerOf(slide, type);
+  if (!layer) return;
+  Object.assign(layer, patch);
+  // 空字串代表「回到 auto／不指定」，留著會被資料層當成真的值
+  for (const key of ['segment', 'asset']) {
+    if (layer[key] === '') delete layer[key];
   }
   persistScenarioEdit();
 }
@@ -1043,7 +1052,7 @@ function newScenario() {
     name: '新情境',
     environment: $('sel-env').value,
     medicalEvent: $('sel-med').value,
-    slides: [{ id: 's1', title: '抵達現場', enabled: true, actions: [{ type: 'wait', note: '' }] }],
+    slides: [{ id: 's1', title: '抵達現場', enabled: true, layers: [newLayer('scene'), newLayer('patient')] }],
   };
   saveScenarioOverride(scenario);
   loadScenario(activeScenarios.find(s => s.id === scenario.id) || scenario);
@@ -1419,6 +1428,7 @@ function projectionMarkup() {
     border: 1px solid rgba(255,255,255,.22); border-radius: 6px;
   }
   #projection-sidebar .edit-action input { flex: 1 1 110px; min-width: 84px; }
+  #projection-sidebar .layer-name { flex: 0 0 60px; font-size: 12px; color: rgba(255,255,255,.6); }
   #projection-sidebar .edit-tools { display: flex; gap: 4px; margin-left: auto; flex: none; }
   #projection-sidebar .edit-tools .flow-btn { font-size: 12px; padding: 4px 8px; }
   #projection-sidebar .edit-danger {
@@ -2352,12 +2362,15 @@ function buildFlowPanel(doc) {
     name.className = 'flow-row-title';
     name.textContent = slide.title;
 
+    // 一眼看出這頁畫面上有什麼：綠幕人物最重要，其次是字幕，都沒有就是純場景
     const meta = doc.createElement('span');
     meta.className = 'flow-row-meta';
-    const steps = flowSteps.filter(s => s.slideId === slide.id);
-    meta.textContent = slide.enabled === false
-      ? '播放時跳過'
-      : (steps.length > 1 ? `${steps.length} 段` : (slide.actions[0].type === 'wait' ? '等教官' : ''));
+    const green = Scenarios.layerOf(slide, 'greenscreen');
+    const text = Scenarios.layerOf(slide, 'text');
+    meta.textContent = slide.enabled === false ? '播放時跳過'
+      : green ? (green.segment ? `片段 ${green.segment}` : '綠幕人物')
+      : text ? '字幕'
+      : (slide.note ? '等教官' : '純場景');
 
     const edit = flowButton(doc, '編輯', () => {
       editingSlideId = slide.id;
@@ -2443,68 +2456,85 @@ function buildSlideEditor(doc) {
   titleRow.appendChild(titleInput);
   wrap.appendChild(titleRow);
 
-  const actionsTitle = doc.createElement('div');
-  actionsTitle.className = 'sidebar-section-title';
-  actionsTitle.textContent = '這一頁會發生的事';
-  wrap.appendChild(actionsTitle);
+  // 給教官的提詞。**不會投影出去**——要投影給學員看的字請加 text 圖層。
+  const noteRow = doc.createElement('label');
+  noteRow.className = 'edit-field';
+  noteRow.append(Object.assign(doc.createElement('span'), { textContent: '提詞' }));
+  const noteInput = Object.assign(doc.createElement('input'),
+    { type: 'text', placeholder: '只有教官看得到，不會投影', value: slide.note || '' });
+  noteInput.addEventListener('change', () => {
+    const v = noteInput.value.trim();
+    if (v) slide.note = v; else delete slide.note;
+    persistScenarioEdit();
+  });
+  noteRow.appendChild(noteInput);
+  wrap.appendChild(noteRow);
 
-  slide.actions.forEach((action, i) => {
+  const layersTitle = doc.createElement('div');
+  layersTitle.className = 'sidebar-section-title';
+  layersTitle.textContent = '圖層（由下往上疊，順序固定）';
+  wrap.appendChild(layersTitle);
+
+  const LAYER_LABEL = {
+    scene: '場景', patient: '病患照片', greenscreen: '去背人物', text: '說明文字', sound: '聲音',
+  };
+
+  // 由上往下顯示＝畫面上由前往後，跟一般繪圖軟體的圖層面板一致
+  [...slide.layers].reverse().forEach(layer => {
     const row = doc.createElement('div');
     row.className = 'edit-action';
+    row.append(Object.assign(doc.createElement('span'),
+      { className: 'layer-name', textContent: LAYER_LABEL[layer.type] || layer.type }));
 
-    const typeSel = doc.createElement('select');
-    [['wait', '停住等教官'], ['complication', '播突發狀況']].forEach(([v, label]) => {
-      typeSel.appendChild(Object.assign(doc.createElement('option'), { value: v, textContent: label }));
-    });
-    typeSel.value = action.type;
-    typeSel.addEventListener('change', () => updateAction(i, { type: typeSel.value }));
-    row.appendChild(typeSel);
-
-    if (action.type === 'wait') {
-      const note = Object.assign(doc.createElement('input'),
-        { type: 'text', placeholder: '提示教官要說什麼（可留空）', value: action.note || '' });
-      note.addEventListener('change', () => updateAction(i, { note: note.value.trim() }));
-      row.appendChild(note);
-    } else {
+    if (layer.type === 'greenscreen') {
       // 編輯器也要把關：這個情境的環境×事件下沒素材的狀況，不該編得進去
       const compSel = doc.createElement('select');
       optionsFor('complication').forEach(c => {
         const usable = complicationUsable(c, currentScenario.environment, currentScenario.medicalEvent);
-        const opt = Object.assign(doc.createElement('option'), {
-          value: c,
-          textContent: usable ? c : `${c}（此情境無素材）`,
-          disabled: !usable,
-        });
-        compSel.appendChild(opt);
+        compSel.appendChild(Object.assign(doc.createElement('option'), {
+          value: c, textContent: usable ? c : `${c}（此情境無素材）`, disabled: !usable,
+        }));
       });
-      compSel.value = action.complication;
-      compSel.addEventListener('change', () => updateAction(i, { complication: compSel.value }));
+      compSel.value = layer.complication;
+      compSel.addEventListener('change', () => updateLayer('greenscreen', { complication: compSel.value }));
       row.appendChild(compSel);
 
       const seg = Object.assign(doc.createElement('input'),
-        { type: 'text', className: 'edit-seg', placeholder: '片段（留空＝全部）', value: action.segment || '' });
-      seg.addEventListener('change', () => updateAction(i, { segment: seg.value.trim() }));
+        { type: 'text', className: 'edit-seg', placeholder: '片段（留空＝第一段）', value: layer.segment || '' });
+      seg.addEventListener('change', () => updateLayer('greenscreen', { segment: seg.value.trim() }));
       row.appendChild(seg);
+    }
+
+    if (layer.type === 'text') {
+      const text = Object.assign(doc.createElement('input'),
+        { type: 'text', placeholder: '投影給學員看的字', value: layer.text || '' });
+      text.addEventListener('change', () => updateLayer('text', { text: text.value.trim() || layer.text }));
+      row.appendChild(text);
+    }
+
+    if (layer.type === 'scene' || layer.type === 'patient') {
+      // 釘選＝所見即所得；留空＝auto，重新產生會換一張
+      const pin = Object.assign(doc.createElement('input'),
+        { type: 'text', className: 'edit-seg', placeholder: '素材 id（留空＝auto）', value: layer.asset || '' });
+      pin.addEventListener('change', () => updateLayer(layer.type, { asset: pin.value.trim() }));
+      row.appendChild(pin);
     }
 
     const tools = doc.createElement('span');
     tools.className = 'edit-tools';
-    tools.append(
-      flowButton(doc, '↑', () => moveAction(i, -1), { disabled: i === 0 }),
-      flowButton(doc, '↓', () => moveAction(i, 1), { disabled: i === slide.actions.length - 1 }),
-      flowButton(doc, '✕', () => removeAction(i)),
-    );
+    // 沒有上下鍵：z 順序由型別決定，投影視窗的 z-index 是寫死的
+    tools.append(flowButton(doc, '✕', () => removeLayer(layer.type)));
     row.appendChild(tools);
     wrap.appendChild(row);
   });
 
   const addBar = doc.createElement('div');
   addBar.className = 'flow-actions';
-  addBar.append(
-    flowButton(doc, '＋ 停住等教官', () => addAction('wait')),
-    flowButton(doc, '＋ 突發狀況', () => addAction('complication')),
-  );
-  wrap.appendChild(addBar);
+  Scenarios.LAYER_TYPES.forEach(type => {
+    if (Scenarios.layerOf(slide, type)) return;   // 每種一頁最多一個
+    addBar.append(flowButton(doc, `＋ ${LAYER_LABEL[type]}`, () => addLayer(type)));
+  });
+  if (addBar.children.length) wrap.appendChild(addBar);
 
   const slideBar = doc.createElement('div');
   slideBar.className = 'flow-actions edit-danger';
