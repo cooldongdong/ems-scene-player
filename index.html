@@ -134,6 +134,33 @@
   .edit-action select { width: auto; flex: none; }
   .edit-action input { flex: 1 1 140px; min-width: 100px; }
   .edit-action input.edit-seg { flex: 0 1 130px; }
+  /* ---------- 預覽 ----------
+     16:9 的框，圖層用與投影端相同的百分比定位；container-type 讓文字大小
+     跟著框寬走（cqw），縮圖與投影上的比例才會一致。 */
+  .preview { margin-top: 16px; }
+  .preview-stage {
+    position: relative; width: 100%; max-width: 460px; aspect-ratio: 16 / 9;
+    overflow: hidden; border-radius: 10px; background: #000;
+    border: 1px solid var(--line); container-type: size;
+  }
+  .preview-scene { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .preview-layer {
+    position: absolute; width: auto; height: auto; object-fit: contain;
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 6px 10px rgba(0,0,0,.4));
+  }
+  .preview-text {
+    position: absolute; transform: translate(-50%, -50%); text-align: center;
+    width: 90%; color: #fff; font-weight: 700; line-height: 1.3;
+    text-shadow: 0 2px 6px rgba(0,0,0,.85);
+  }
+  .preview-empty, .preview-missing {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    padding: 16px; text-align: center; font-size: 12px; color: var(--muted);
+  }
+  .preview-missing { color: #ffb27a; align-content: end; inset: auto 0 8px 0; }
+  .preview-caption { margin: 6px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
   .layer-name { flex: 0 0 68px; font-size: 13px; color: var(--muted); }
   .edit-tools { display: flex; gap: 4px; margin-left: auto; flex: none; }
   .edit-tools .flow-btn { font-size: 13px; padding: 5px 9px; }
@@ -433,7 +460,10 @@ function layoutHint() {
 // 進到某一頁時，把該頁圖層上的版面搬進執行期物件（渲染程式讀的還是這兩個物件）
 function loadLayoutFromSlide(slide) {
   Object.assign(patientOverlay, PATIENT_OVERLAY_DEFAULTS);
-  Object.keys(complicationOverlays).forEach(comp => delete complicationOverlays[comp]);
+  // **就地覆寫，不能 delete 再重建。** 卡片上的滑桿在 generate() 時就抓住了這些物件的
+  // 參考（overlaySliderRows 直接改傳進去的 state），換成新物件的話滑桿會改到孤兒，
+  // 投影與預覽都不會動——這正是這裡曾經踩過的坑。
+  Object.values(complicationOverlays).forEach(l => Object.assign(l, COMP_OVERLAY_DEFAULTS));
 
   const patient = slide && Scenarios.layerOf(slide, 'patient');
   // 有沒有 patient 圖層就是「要不要疊病患」——不需要另一個獨立的開關狀態
@@ -2151,6 +2181,7 @@ function patientOverlayControls(doc = document, hintText = layoutHint()) {
   const applyChange = () => {
     applyPatientOverlayLayout();
     syncPatientOverlayBoxes();
+    updatePreviewLayout();
     persistLayerLayout('patient');
   };
   const sliders = overlaySliderRows(patientOverlay, PATIENT_OVERLAY_SLIDERS, '病患照片', applyChange, doc);
@@ -2191,6 +2222,7 @@ function complicationOverlayControls(comp, segment, playLabel, shared) {
     applyComplicationOverlayLayout();
     redrawIfPaused();   // 暫停的畫面沒有 rAF 在跑，要自己重畫一幀
     syncComplicationOverlayBoxes(comp);
+    updatePreviewLayout();
     persistLayerLayout('greenscreen', comp);
   };
 
@@ -2233,6 +2265,7 @@ function sidebarComplicationControls(comp, doc) {
     applyComplicationOverlayLayout();
     if (chromaRedraw && !chromaFrame) chromaRedraw();   // 暫停的畫面要自己重畫一幀
     syncComplicationOverlayBoxes(comp);
+    updatePreviewLayout();
     persistLayerLayout('greenscreen', comp);
   };
   const sliders = overlaySliderRows(layout, COMP_OVERLAY_SLIDERS, `${comp}綠幕`, applyChange, doc);
@@ -2383,7 +2416,10 @@ function buildFlowPanel(doc) {
     const edit = flowButton(doc, '編輯', () => {
       editingSlideId = slide.id;
       sidebarLevel = 'edit';
-      renderFlow();
+      // 同時跳到這一頁：滑桿永遠操作「目前這一步」，不跳的話會變成
+      // 「在編第 3 頁、滑桿卻在改第 1 頁」，預覽與投影也對不上
+      const i = flowSteps.findIndex(s => s.id === slide.id);
+      if (i >= 0) gotoFlow(i); else renderFlow();
     });
     edit.classList.add('flow-btn-mini');
 
@@ -2554,13 +2590,162 @@ function buildSlideEditor(doc) {
   return wrap;
 }
 
+// ---------- 預覽 ----------
+// 圖層編輯器沒有預覽等於盲編：改了位置要開投影視窗才看得到。
+// 預覽把同一頁的圖層堆在一個 16:9 的小框裡，用的是**與投影端同一組數值**
+// （size→vw/vh 對應到框的寬高百分比，x/y→left/top，中心點對齊），
+// 所以這裡看到的位置就是投影上的位置。
+
+// 圖層要用哪一筆素材：釘選了就用那筆，否則用本次產生時挑到的
+function layerAsset(layer, fallback) {
+  if (!layer) return null;
+  if (layer.asset) return DATA.assets.find(a => a.id === layer.asset) || null;
+  return fallback || null;
+}
+
+function previewImage(asset, className) {
+  if (!asset || asset.type === 'none') return null;
+  const file = assetPath(asset, assetFiles(asset)[0]);
+  if (!file) return null;
+  return Object.assign(document.createElement('img'),
+    { className, src: absoluteAssetUrl(file), alt: asset.description || '' });
+}
+
+// 綠幕在投影上是逐幀去背的 canvas；預覽只需要一張靜止的去背圖就夠了，
+// 位置調得對不對不需要動畫，而且省下一整個 rAF 迴圈。
+function previewGreenscreen(layer, canvas) {
+  const segment = layer.segment || complicationSegments(layer.complication,
+    $('sel-env').value, $('sel-med').value)[0];
+  const asset = complicationVideoAssets[segmentKey(layer.complication, segment)];
+  if (!hasProjectableComplication(asset)) return false;
+
+  const file = assetPath(asset, assetFiles(asset)[0]);
+  const url = absoluteAssetUrl(file);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const paint = (source, w, h) => {
+    const width = Math.min(w || KEY_MAX_WIDTH, KEY_MAX_WIDTH);
+    canvas.width = width;
+    canvas.height = Math.max(1, Math.round(width * ((h && w) ? h / w : 9 / 16)));
+    try {
+      // 容差讀執行期物件，理由同 updatePreviewLayout：滑桿改的是它，圖層慢一拍
+      chromaKeyFrame(ctx, source, canvas.width, canvas.height,
+        complicationOverlay(layer.complication).tolerance);
+    } catch { /* 素材還沒解碼完就跳過，下次重繪會補上 */ }
+  };
+  // 調「去背」滑桿要重算像素，不只是換位置——把重畫函式掛在 canvas 上供 updatePreviewLayout 呼叫。
+  // paint 讀的是 layer.tolerance，而 layer 是被就地修改的同一個物件，所以永遠拿到最新值。
+  const remember = (source, w, h) => {
+    canvas.__repaint = () => paint(source, w, h);
+    canvas.__repaint();
+  };
+  if (mediaKind(asset, file) === 'video') {
+    // preload 必須是 auto：metadata 只抓中繼資料、不抓影格，loadeddata 會拿到空白畫面
+    const video = Object.assign(document.createElement('video'),
+      { src: url, muted: true, playsInline: true, preload: 'auto' });
+    video.addEventListener('loadeddata', () => remember(video, video.videoWidth, video.videoHeight), { once: true });
+  } else {
+    const img = new Image();
+    img.addEventListener('load', () => remember(img, img.naturalWidth, img.naturalHeight), { once: true });
+    img.src = url;
+  }
+  return true;
+}
+
+// 拖滑桿時只改樣式、必要時重畫去背——整塊重繪會把拖曳中的滑桿焦點弄掉。
+//
+// 讀的是 patientOverlay／complicationOverlay 這兩個**執行期物件**，不是圖層：
+// 滑桿直接改的就是它們，圖層要等 persistLayerLayout() 才同步。讀圖層會慢一拍，
+// 拖曳時預覽會紋風不動。
+function updatePreviewLayout() {
+  const stage = document.querySelector('#flow .preview-stage');
+  if (!stage) return;
+  const slide = (sidebarLevel === 'edit' && editingSlide()) || currentSlide();
+  if (!slide) return;
+
+  const place = (node, layout) => {
+    if (!node || !layout) return;
+    Object.assign(node.style, {
+      maxWidth: layout.size + '%', maxHeight: layout.size + '%',
+      left: layout.x + '%', top: layout.y + '%',
+    });
+  };
+  if (Scenarios.layerOf(slide, 'patient')) {
+    place(stage.querySelector('img.preview-layer'), patientOverlay);
+  }
+
+  const green = Scenarios.layerOf(slide, 'greenscreen');
+  const canvas = stage.querySelector('canvas.preview-layer');
+  if (green) {
+    place(canvas, complicationOverlay(green.complication));
+    if (canvas && canvas.__repaint) canvas.__repaint();   // 去背容差要重算像素
+  }
+}
+
+function buildPreview() {
+  // 編輯中就預覽正在編的那一頁，播放中就預覽目前這一步
+  const slide = (sidebarLevel === 'edit' && editingSlide()) || currentSlide();
+  if (!slide) return null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'preview';
+  const stage = document.createElement('div');
+  stage.className = 'preview-stage';
+
+  const scene = previewImage(layerAsset(Scenarios.layerOf(slide, 'scene'), currentEnvironmentAsset), 'preview-scene');
+  if (scene) stage.appendChild(scene);
+  else stage.appendChild(Object.assign(document.createElement('div'),
+    { className: 'preview-empty', textContent: '這一頁沒有可預覽的場景素材' }));
+
+  const patient = Scenarios.layerOf(slide, 'patient');
+  const patientImg = previewImage(layerAsset(patient, currentPatientPhotoAsset), 'preview-layer');
+  if (patient && patientImg) {
+    // 與 applyPatientOverlayLayout 同一組數值：size→vw/vh、x/y→left/top、中心點對齊
+    Object.assign(patientImg.style, {
+      maxWidth: patient.size + '%', maxHeight: patient.size + '%',
+      left: patient.x + '%', top: patient.y + '%',
+    });
+    stage.appendChild(patientImg);
+  }
+
+  const green = Scenarios.layerOf(slide, 'greenscreen');
+  if (green) {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'preview-layer';
+    Object.assign(canvas.style, {
+      maxWidth: green.size + '%', maxHeight: green.size + '%',
+      left: green.x + '%', top: green.y + '%',
+    });
+    if (previewGreenscreen(green, canvas)) stage.appendChild(canvas);
+    else stage.appendChild(Object.assign(document.createElement('div'),
+      { className: 'preview-missing', textContent: `綠幕素材不存在：${green.complication}` }));
+  }
+
+  const text = Scenarios.layerOf(slide, 'text');
+  if (text) {
+    const node = Object.assign(document.createElement('div'),
+      { className: 'preview-text', textContent: text.text });
+    Object.assign(node.style, { fontSize: `${text.size / 10}cqw`, top: text.y + '%', left: text.x + '%' });
+    stage.appendChild(node);
+  }
+
+  wrap.appendChild(stage);
+  const caption = document.createElement('p');
+  caption.className = 'preview-caption';
+  caption.textContent = `預覽：${slide.title}`
+    + (slide.note ? `　·　提詞（不投影）：${slide.note}` : '');
+  wrap.appendChild(caption);
+  return wrap;
+}
+
 function renderFlow() {
   const box = $('flow');
   let node;
   if (!currentScenario) node = document.createElement('div');
   else if (sidebarLevel === 'edit' && editingSlide()) node = buildSlideEditor(document);
   else node = buildFlowPanel(document);
-  box.replaceChildren(node);
+  // 預覽只放主視窗——投影側邊欄的背後就是真正的投影畫面，再放一個縮圖是多餘的
+  const preview = currentScenario ? buildPreview() : null;
+  box.replaceChildren(...(preview ? [preview, node] : [node]));
   box.hidden = !currentScenario;
   renderProjectionSidebar();
 }
