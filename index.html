@@ -410,59 +410,54 @@ function complicationOverlay(comp) {
   return complicationOverlays[comp] || (complicationOverlays[comp] = { ...COMP_OVERLAY_DEFAULTS });
 }
 
-// 疊加版面依「當下的環境素材」存進 localStorage：同一個場景的人物位置每次訓練都一樣，
-// 換到別的環境（甚至同環境的另一張背景）本來就該是另一組位置。
-const OVERLAY_STORE_KEY = 'scene-player.overlay-layouts.v1';
-let overlayStoreEnv = null;   // 目前這份版面屬於哪一筆 environment_video 素材
+// 版面現在寫在情境檔的圖層上。
+//
+// 舊版是「依當下的環境素材」存進 localStorage，那有兩個問題：
+//   ① 它是依環境的，對不上圖層模型的依頁——同一個環境的兩頁想擺不同位置就做不到
+//   ② 存在瀏覽器裡，換一台電腦就不見，也沒辦法跟別人分享或送 PR
+// 圖層本來就要存自己的位置，所以這一層直接消失，不做遷移（2026-08-03 Dong 拍板）。
 
-function readOverlayStore() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(OVERLAY_STORE_KEY));
-    return raw && typeof raw === 'object' ? raw : {};
-  } catch {
-    return {};   // 內容壞掉就當作沒存過，不要卡住整個頁面
-  }
+const LAYOUT_KEYS = { patient: ['size', 'x', 'y'], greenscreen: ['size', 'x', 'y', 'tolerance'] };
+
+function currentSlide() {
+  return flowIndex >= 0 ? flowSteps[flowIndex] : null;
 }
 
-// 存進來的值可能被手改過，一律夾回滑桿範圍
-function sanitizeLayout(raw, defaults, sliders) {
-  const layout = { ...defaults };
-  if (!raw || typeof raw !== 'object') return layout;
-  for (const { key, min, max } of sliders) {
-    const value = Number(raw[key]);
-    if (Number.isFinite(value)) layout[key] = Math.min(max, Math.max(min, Math.round(value)));
-  }
-  return layout;
+// 滑桿下方那行字要誠實：沒載入情境時調了不會被記住
+function layoutHint() {
+  return currentScenario && currentSlide()
+    ? '調整會即時反映在投影視窗，並存進這一頁的圖層'
+    : '調整會即時反映在投影視窗；載入情境後才會被記住';
 }
 
-function saveOverlayLayouts() {
-  if (!overlayStoreEnv) return;
-  const store = readOverlayStore();
-  store[overlayStoreEnv] = {
-    patient: sanitizeLayout(patientOverlay, PATIENT_OVERLAY_DEFAULTS, PATIENT_OVERLAY_SLIDERS),
-    complications: Object.fromEntries(Object.entries(complicationOverlays)
-      .map(([comp, layout]) => [comp, sanitizeLayout(layout, COMP_OVERLAY_DEFAULTS, COMP_OVERLAY_SLIDERS)])),
-  };
-  try {
-    localStorage.setItem(OVERLAY_STORE_KEY, JSON.stringify(store));
-  } catch {
-    // 無痕模式或容量滿：記不起來而已，不影響這次操作
-  }
-}
-
-function loadOverlayLayouts(envAssetId) {
-  overlayStoreEnv = envAssetId || null;
+// 進到某一頁時，把該頁圖層上的版面搬進執行期物件（渲染程式讀的還是這兩個物件）
+function loadLayoutFromSlide(slide) {
   Object.assign(patientOverlay, PATIENT_OVERLAY_DEFAULTS);
   Object.keys(complicationOverlays).forEach(comp => delete complicationOverlays[comp]);
-  if (!envAssetId) return;
 
-  const saved = readOverlayStore()[envAssetId];
-  if (!saved) return;
-  Object.assign(patientOverlay,
-    sanitizeLayout(saved.patient, PATIENT_OVERLAY_DEFAULTS, PATIENT_OVERLAY_SLIDERS));
-  for (const [comp, layout] of Object.entries(saved.complications || {})) {
-    complicationOverlays[comp] = sanitizeLayout(layout, COMP_OVERLAY_DEFAULTS, COMP_OVERLAY_SLIDERS);
+  const patient = slide && Scenarios.layerOf(slide, 'patient');
+  // 有沒有 patient 圖層就是「要不要疊病患」——不需要另一個獨立的開關狀態
+  patientOverlay.enabled = !!patient;
+  if (patient) LAYOUT_KEYS.patient.forEach(k => { patientOverlay[k] = patient[k]; });
+
+  const green = slide && Scenarios.layerOf(slide, 'greenscreen');
+  if (green) {
+    const layout = complicationOverlay(green.complication);
+    LAYOUT_KEYS.greenscreen.forEach(k => { layout[k] = green[k]; });
   }
+}
+
+// 拖滑桿會連續觸發，每一格都寫 localStorage 太重，收斂成一次
+let layoutSaveTimer = null;
+function persistLayerLayout(type, comp) {
+  const slide = currentSlide();
+  const layer = slide && Scenarios.layerOf(slide, type);
+  // 沒載入情境（直接按「產生情境」的臨時模式）就只在記憶體裡調，不寫進任何情境檔
+  if (!currentScenario || !layer) return;
+  const src = type === 'patient' ? patientOverlay : complicationOverlay(comp);
+  LAYOUT_KEYS[type].forEach(k => { layer[k] = src[k]; });
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(() => saveScenarioOverride(currentScenario), 400);
 }
 
 function syncComplicationOverlayBoxes(comp) {
@@ -839,6 +834,10 @@ function stepLabel(slide) {
 
 function runStep(slide) {
   if (!slide) return;
+  // 版面存在這一頁的圖層上，換頁就要換一組——這是圖層模型取代舊 localStorage 的地方
+  loadLayoutFromSlide(slide);
+  renderProjectionPatient();
+  syncPatientOverlayBoxes();
   const green = Scenarios.layerOf(slide, 'greenscreen');
   if (!green) {
     // 沒有綠幕圖層的頁不該讓上一頁的人物還站在畫面上
@@ -2124,7 +2123,7 @@ function overlayFoot(hintText, reset, extraButton, doc = document) {
   return foot;
 }
 
-function patientOverlayControls(doc = document, hintText = '調整會即時反映在投影視窗，並依目前環境素材記住') {
+function patientOverlayControls(doc = document, hintText = layoutHint()) {
   const box = doc.createElement('div');
   box.className = 'overlay-controls';
 
@@ -2134,6 +2133,15 @@ function patientOverlayControls(doc = document, hintText = '調整會即時反�
     { type: 'checkbox', checked: patientOverlay.enabled });
   checkbox.addEventListener('change', () => {
     patientOverlay.enabled = checkbox.checked;
+    // 載入情境時，「要不要疊病患」就是「這頁有沒有 patient 圖層」，
+    // 不另外存一個開關狀態——兩份真相遲早對不起來
+    const slide = currentSlide();
+    if (currentScenario && slide) {
+      const editingBefore = editingSlideId;
+      editingSlideId = slide.id;
+      if (checkbox.checked) addLayer('patient'); else removeLayer('patient');
+      editingSlideId = editingBefore;
+    }
     renderProjectionPatient();
     syncPatientOverlayBoxes();
   });
@@ -2143,7 +2151,7 @@ function patientOverlayControls(doc = document, hintText = '調整會即時反�
   const applyChange = () => {
     applyPatientOverlayLayout();
     syncPatientOverlayBoxes();
-    saveOverlayLayouts();
+    persistLayerLayout('patient');
   };
   const sliders = overlaySliderRows(patientOverlay, PATIENT_OVERLAY_SLIDERS, '病患照片', applyChange, doc);
   box.appendChild(sliders.node);
@@ -2183,7 +2191,7 @@ function complicationOverlayControls(comp, segment, playLabel, shared) {
     applyComplicationOverlayLayout();
     redrawIfPaused();   // 暫停的畫面沒有 rAF 在跑，要自己重畫一幀
     syncComplicationOverlayBoxes(comp);
-    saveOverlayLayouts();
+    persistLayerLayout('greenscreen', comp);
   };
 
   const sliders = overlaySliderRows(layout, COMP_OVERLAY_SLIDERS, `${comp}綠幕`, applyChange);
@@ -2207,7 +2215,7 @@ function complicationOverlayControls(comp, segment, playLabel, shared) {
   });
 
   const hint = `預覽定位＝疊上投影停在第一格；「${playLabel}」演完停在最後一格，按停止才收掉。`
-    + (shared ? '版面本組各片段共用，' : '') + '依目前環境素材記住';
+    + layoutHint();
   box.appendChild(overlayFoot(hint, reset, preview));
   return box;
 }
@@ -2225,7 +2233,7 @@ function sidebarComplicationControls(comp, doc) {
     applyComplicationOverlayLayout();
     if (chromaRedraw && !chromaFrame) chromaRedraw();   // 暫停的畫面要自己重畫一幀
     syncComplicationOverlayBoxes(comp);
-    saveOverlayLayouts();
+    persistLayerLayout('greenscreen', comp);
   };
   const sliders = overlaySliderRows(layout, COMP_OVERLAY_SLIDERS, `${comp}綠幕`, applyChange, doc);
   box.appendChild(sliders.node);
@@ -2237,7 +2245,7 @@ function sidebarComplicationControls(comp, doc) {
     Object.assign(layout, COMP_OVERLAY_DEFAULTS);
     applyChange();
   });
-  box.appendChild(overlayFoot('版面本組各片段共用，依目前環境素材記住', reset, null, doc));
+  box.appendChild(overlayFoot(layoutHint(), reset, null, doc));
   return box;
 }
 
@@ -2799,8 +2807,9 @@ function generate() {
     }
     if (role === 'environment_video') {
       currentEnvironmentAsset = result ? result.asset : null;
-      // 疊加版面跟著環境素材走，要在建出病患／綠幕卡片之前先換好
-      loadOverlayLayouts(result ? result.asset.id : null);
+      // 版面不再跟著環境素材走（那是舊的 localStorage 模型）。這裡先回到預設，
+      // 真正的值在進到某一頁時由 loadLayoutFromSlide() 從該頁的圖層讀進來。
+      loadLayoutFromSlide(currentSlide());
     }
     cards.appendChild(buildCard({
       role, label, result,
