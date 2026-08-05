@@ -35,6 +35,29 @@
     padding: 20px;
     margin-top: 24px;
   }
+  /* ---------- 兩欄工作區 ----------
+     左邊挑情境、右邊看預覽並決定要演還是要改。預覽是選完情境後最重要的東西，
+     所以右欄拿走全部剩餘寬度；窄畫面時疊成一欄，情境清單在上。 */
+  .workspace {
+    display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+    gap: 20px; align-items: start; margin-top: 24px;
+  }
+  @media (max-width: 820px) { .workspace { grid-template-columns: 1fr; } }
+  .workspace-side { position: sticky; top: 16px; }
+  .workspace-main { min-height: 260px; }
+  .workspace-empty { margin: 0; padding: 40px 8px; text-align: center; color: var(--muted); font-size: 14px; }
+  .stage-bar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line);
+  }
+  .stage-bar button { font-size: 14px; padding: 9px 16px; }
+
+  /* 舊的手動組合入口，預設收起。卡片目前仍是播放機制的宿主，所以只能收不能刪。 */
+  .legacy { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .legacy > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .legacy > summary:hover { color: var(--accent); }
+  .legacy[open] > summary { margin-bottom: 16px; }
+
   .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
   .field label.title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
   select {
@@ -63,15 +86,22 @@
   .assets-link a { color: var(--muted); text-decoration: none; }
   .assets-link a:hover { color: var(--accent); }
 
-  /* 常用情境快捷鈕：素材確定齊全的組合，點一下套用整組設定並直接產生 */
-  .presets { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
-  .presets .title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
-  .preset-list { display: flex; flex-wrap: wrap; gap: 8px; }
-  .preset-list button {
-    border-radius: 999px; padding: 6px 14px; font-size: 14px;
+  /* 情境清單：左欄的直式清單，一列一個情境 */
+  .presets {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px;
   }
-  /* 目前三個選單剛好等於某個情境時亮起來，讓人知道自己在哪一組 */
+  .presets .title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; letter-spacing: .5px; }
+  .preset-list { display: grid; gap: 6px; }
+  .preset-list button[data-scenario-id] {
+    width: 100%; text-align: left; border-radius: 8px;
+    padding: 9px 12px; font-size: 14px; line-height: 1.4;
+  }
+  /* 目前載入的那一組亮起來，讓人知道自己在哪 */
   .preset-list button.active { border-color: var(--accent); background: var(--accent-dim); }
+  /* 新增／匯出／匯入排在清單底下，跟情境本身分開 */
+  .preset-list .flow-actions { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .preset-list .flow-actions button { font-size: 13px; padding: 6px 12px; }
 
   /* ---------- 流程 ----------
      builder 仍吃 doc 參數，之後若要把面板再長回投影視窗，接上宿主即可。 */
@@ -136,9 +166,10 @@
   /* ---------- 預覽 ----------
      16:9 的框，圖層用與投影端相同的百分比定位；container-type 讓文字大小
      跟著框寬走（cqw），縮圖與投影上的比例才會一致。 */
-  .preview { margin-top: 16px; }
+  /* 預覽拿走右欄的全寬——選完情境後它是最重要的東西 */
+  .preview { margin-bottom: 16px; }
   .preview-stage {
-    position: relative; width: 100%; max-width: 460px; aspect-ratio: 16 / 9;
+    position: relative; width: 100%; aspect-ratio: 16 / 9;
     overflow: hidden; border-radius: 10px; background: #000;
     border: 1px solid var(--line); container-type: size;
   }
@@ -332,11 +363,33 @@
     <p>選環境、急救事件與突發狀況，自動從素材庫組出情境卡；勾選的每個突發狀況都會各自成一組（影片＋聲音），訓練時再逐一播放。</p>
   </header>
 
-  <section class="panel">
-    <div class="presets" id="presets" hidden>
-      <span class="title">常用情境（素材齊全，點一下直接套用並產生）</span>
-      <div class="preset-list" id="preset-list"></div>
-    </div>
+  <!-- 兩欄：左邊挑情境，右邊看預覽並決定要演還是要改。
+       預覽是選完情境後最重要的東西，所以它拿最大的一塊。 -->
+  <div class="workspace">
+    <aside class="workspace-side">
+      <div class="presets" id="presets" hidden>
+        <span class="title">情境</span>
+        <div class="preset-list" id="preset-list"></div>
+      </div>
+      <p class="assets-link"><a href="assets.html">素材庫與覆蓋表 →</a></p>
+    </aside>
+
+    <section class="workspace-main panel">
+      <div class="stage-bar">
+        <button id="btn-project" disabled>開啟投影視窗</button>
+        <button id="btn-play" disabled>播放場景</button>
+        <button id="btn-stop" disabled>全部停止</button>
+        <span id="status">載入素材庫中…</span>
+      </div>
+      <div class="flow" id="flow" hidden></div>
+      <p class="workspace-empty" id="workspace-empty">從左邊挑一個情境，這裡會顯示預覽。</p>
+    </section>
+  </div>
+
+  <!-- 舊入口：選環境×事件×突發狀況再產生。情境已經涵蓋它，這裡先收起來，
+       下一刀把播放從卡片解耦之後就整批移除（卡片目前仍是播放機制的宿主）。 -->
+  <details class="legacy" id="legacy">
+    <summary>舊的手動組合入口（將移除）</summary>
     <div class="controls">
       <div class="field">
         <label class="title" for="sel-env">環境（單選）</label>
@@ -352,19 +405,12 @@
       </div>
     </div>
     <p class="coverage-note" id="coverage-note"></p>
-    <p class="assets-link"><a href="assets.html">素材庫與覆蓋表 →</a></p>
     <div class="actions">
       <button class="primary" id="btn-gen" disabled>產生情境</button>
-      <button id="btn-project" disabled>開啟投影視窗</button>
-      <button id="btn-play" disabled>播放場景</button>
-      <button id="btn-stop" disabled>全部停止</button>
-      <span id="status">載入素材庫中…</span>
     </div>
-    <div class="flow" id="flow" hidden></div>
-  </section>
-
-  <div class="cards" id="cards"></div>
-  <div id="comp-groups"></div>
+    <div class="cards" id="cards"></div>
+    <div id="comp-groups"></div>
+  </details>
 </div>
 
 <script src="vendor/js-yaml.min.js"></script>
@@ -2628,6 +2674,8 @@ function renderFlow() {
   const preview = currentScenario ? buildPreview() : null;
   box.replaceChildren(...(preview ? [preview, node] : [node]));
   box.hidden = !currentScenario;
+  // 還沒挑情境時右欄不該是一片空白，要說明下一步該做什麼
+  $('workspace-empty').hidden = !!currentScenario;
 }
 
 function buildCard({ role, label, result, changed, emptyText, extras, silentVoice }) {
