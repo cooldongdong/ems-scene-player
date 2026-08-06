@@ -317,7 +317,13 @@
   .overlay-controls button.preview.on { border-color: var(--accent); background: var(--accent-dim); }
 
   #status { color: var(--muted); font-size: 13px; }
-  #status.error { color: var(--accent); }
+  /* 出錯時要夠明顯：它常常是使用者唯一能看到的線索 */
+  #status.error {
+    color: var(--accent); font-weight: 600;
+    padding: 8px 12px; border-radius: 8px;
+    background: var(--accent-dim); border: 1px solid var(--accent);
+  }
+  .status-line { margin: 10px 0 0; }
 
   /* 同一個事件裡的影片／照片／配音維持由上而下的閱讀順序 */
   .cards { display: grid; gap: 12px; margin-top: 18px; grid-template-columns: 1fr; }
@@ -432,7 +438,11 @@
 <div class="wrap">
   <header>
     <h1>消防員場 事件腳本產生器</h1>
-    <p>選環境、急救事件與突發狀況，自動從素材庫組出情境卡；勾選的每個突發狀況都會各自成一組（影片＋聲音），訓練時再逐一播放。</p>
+    <p>選一個情境，確認畫面沒問題就可以開始投影；沒有合適的就新增或複製一個來改。</p>
+    <!-- 狀態列必須永遠看得見。它曾經放在只有載入情境後才顯示的工具列裡，
+         結果「資料層是舊版、請強制重新整理」這種訊息剛好在最需要被看到時被藏起來，
+         使用者只看到一片空白的情境清單。 -->
+    <p class="status-line" id="status">載入素材庫中…</p>
   </header>
 
   <!-- 兩欄：左邊挑情境，右邊看預覽並決定要演還是要改。
@@ -454,7 +464,6 @@
         <button id="btn-project" disabled>開始投影</button>
         <button id="btn-play" disabled>播放場景</button>
         <button id="btn-stop" disabled>全部停止</button>
-        <span id="status">載入素材庫中…</span>
       </div>
     </section>
   </div>
