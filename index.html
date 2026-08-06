@@ -48,8 +48,10 @@
   }
   .workspace.has-scenario { grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 20px; }
   .workspace-side { position: sticky; top: 16px; min-width: 0; }
+  /* 兩欄上緣要切齊：右欄沿用 .panel 的 margin-top 會比左欄低 24px，
+     padding 也得跟左欄的卡片一致，否則第一行內容仍對不齊。 */
   .workspace-main {
-    min-width: 0; overflow: hidden;
+    min-width: 0; overflow: hidden; margin-top: 0; padding: 14px;
     opacity: 0; transition: opacity .28s ease .08s;
   }
   .workspace.has-scenario .workspace-main { opacity: 1; }
@@ -118,7 +120,8 @@
 
   /* ---------- 流程 ----------
      builder 仍吃 doc 參數，之後若要把面板再長回投影視窗，接上宿主即可。 */
-  .flow { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+  /* 現在是右欄的第一個元素，不能再帶舊版那條分隔線的上緣間距，否則跟左欄對不齊 */
+  .flow { margin-top: 0; padding-top: 0; border-top: 0; }
   .flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .flow-title { font-size: 16px; font-weight: 700; }
   .flow-counter { font-size: 13px; color: var(--muted); margin-left: auto; }
@@ -196,6 +199,10 @@
   }
   .preview-item.dragging { cursor: grabbing; }
   .preview-item:hover, .preview-item.dragging { outline: 1px dashed rgba(255,255,255,.65); outline-offset: 2px; }
+  /* 瀏覽模式：預覽只是給人看的，不給拖也不給把手 */
+  .preview-locked .preview-item { cursor: default; }
+  .preview-locked .preview-item:hover { outline: none; }
+  .preview-locked .preview-handle { display: none; }
   .preview-media {
     display: block; width: auto; height: auto; object-fit: contain;
     filter: drop-shadow(0 6px 10px rgba(0,0,0,.4));
@@ -906,6 +913,7 @@ function loadScenario(scenario) {
   buildFlowSteps();
   flowIndex = 0;          // 直接停在第一頁，右欄一出現就有畫面可看
   panelLevel = 'browse';
+  browseAutoStopped = false;
   renderFlow();
   runStep(flowSteps[0]);
 }
@@ -2665,6 +2673,10 @@ function buildPreview() {
   else stage.appendChild(Object.assign(document.createElement('div'),
     { className: 'preview-empty', textContent: '這一頁沒有可預覽的場景素材' }));
 
+  // 瀏覽模式只是「確認這是不是我要的情境」，不該能改東西——編輯進去才給拖
+  const editable = panelLevel !== 'browse';
+  if (!editable) stage.classList.add('preview-locked');
+
   const patient = Scenarios.layerOf(slide, 'patient');
   const patientImg = previewImage(layerAsset(patient, currentPatientPhotoAsset), '');
   if (patient && patientImg) {
@@ -2672,7 +2684,7 @@ function buildPreview() {
     stage.appendChild(item);
     // 圖還沒載完就量不到尺寸，載完再擺一次
     patientImg.addEventListener('load', () => placePreviewItem(item, patientOverlay, stage), { once: true });
-    makePreviewDraggable(item, 'patient', null, stage);
+    if (editable) makePreviewDraggable(item, 'patient', null, stage);
   }
 
   const green = Scenarios.layerOf(slide, 'greenscreen');
@@ -2681,7 +2693,7 @@ function buildPreview() {
     if (previewGreenscreen(green, canvas)) {
       const item = previewItem('greenscreen', canvas, green.complication);
       stage.appendChild(item);
-      makePreviewDraggable(item, 'greenscreen', green.complication, stage);
+      if (editable) makePreviewDraggable(item, 'greenscreen', green.complication, stage);
     } else {
       stage.appendChild(Object.assign(document.createElement('div'),
         { className: 'preview-missing', textContent: `綠幕素材不存在：${green.complication}` }));
@@ -2696,6 +2708,11 @@ function buildPreview() {
     stage.appendChild(node);
   }
 
+  if (panelLevel === 'browse') {
+    stage.addEventListener('pointerenter', stopBrowseAutoplay);
+    stage.addEventListener('pointerleave', startBrowseAutoplay);
+  }
+
   // 翻頁：確認情境時就是靠這個一頁頁看過去
   if (flowSteps.length > 1) {
     const at = Math.max(0, flowIndex);
@@ -2703,7 +2720,11 @@ function buildPreview() {
       const b = Object.assign(document.createElement('button'),
         { type: 'button', className: `preview-nav ${cls}`, textContent: label, disabled });
       b.setAttribute('aria-label', dir < 0 ? '上一頁' : '下一頁');
-      b.addEventListener('click', e => { e.stopPropagation(); gotoFlow(at + dir); });
+      b.addEventListener('click', e => {
+        e.stopPropagation();
+        browseAutoStopped = true; stopBrowseAutoplay();
+        gotoFlow(at + dir);
+      });
       return b;
     };
     stage.append(
@@ -2730,6 +2751,35 @@ function buildPreview() {
 
 // 瀏覽模式：右欄只有預覽與兩個出口。確認這是不是想要的情境，就這麼多。
 // 頁清單、播放控制、圖層編輯全部推到「編輯」之後——它們是排練用的，不是確認用的。
+// ---------- 瀏覽模式的自動翻頁 ----------
+// 目的只有一個：讓人快速知道這個情境演什麼。所以它**只換預覽，不驅動投影**——
+// 投影是給學員看的，被 3 秒一次的切換洗版就毀了。
+// 同理，投影視窗開著時代表在演示，自動翻頁一律不啟動。
+const BROWSE_INTERVAL = 2600;
+let browseTimer = null;
+let browseAutoStopped = false;   // 使用者手動翻過頁就不再自己跑
+
+function stopBrowseAutoplay() {
+  clearInterval(browseTimer);
+  browseTimer = null;
+}
+
+function browseAutoplayable() {
+  return panelLevel === 'browse' && flowSteps.length > 1 && !browseAutoStopped
+    && !(projectionWindow && !projectionWindow.closed);
+}
+
+function startBrowseAutoplay() {
+  stopBrowseAutoplay();
+  if (!browseAutoplayable()) return;
+  browseTimer = setInterval(() => {
+    if (!browseAutoplayable()) { stopBrowseAutoplay(); return; }
+    // 繞回開頭，讓人看完整輪；不呼叫 gotoFlow 就是為了不碰投影
+    flowIndex = (Math.max(0, flowIndex) + 1) % flowSteps.length;
+    renderFlow();
+  }, BROWSE_INTERVAL);
+}
+
 function buildBrowseView(doc, preview) {
   const wrap = doc.createElement('div');
   const head = doc.createElement('div');
@@ -2774,6 +2824,10 @@ function renderFlow() {
   bar.hidden = !currentScenario;
 
   document.querySelector('.workspace').classList.toggle('has-scenario', !!currentScenario);
+
+  // 只在還沒跑時啟動：這個函式會被自動翻頁自己呼叫，每次都重設就永遠不會前進
+  if (panelLevel === 'browse') { if (!browseTimer) startBrowseAutoplay(); }
+  else stopBrowseAutoplay();
 }
 
 function buildCard({ role, label, result, changed, emptyText, extras, silentVoice }) {
