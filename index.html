@@ -41,10 +41,13 @@
   /* 還沒挑情境時左欄佔滿畫面，讓人一眼看完所有情境；選了才把右欄推出來。
      兩個狀態都是「兩軌」（0fr → 1fr），軌數不變才動得起來——
      1fr → 260px 1fr 是軌數改變，瀏覽器不會補間。 */
+  /* 欄寬**不做 transition**：兩個狀態的軌道定義是 minmax(0,1fr) → minmax(200px,260px)，
+     min 從 0 變 200px、max 從 1fr 變 260px，fr 與 px 之間無法插值，瀏覽器會卡在起始值
+     （實測快速重繪時欄寬就停在未選狀態不動）。所以欄寬瞬間切換，
+     「滑入」的感覺改由右欄自己的位移＋淡入負責——那兩個屬性一定插得動。 */
   .workspace {
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0fr);
     gap: 0; align-items: start; margin-top: 24px;
-    transition: grid-template-columns .38s cubic-bezier(.22,.61,.36,1), gap .38s ease;
   }
   .workspace.has-scenario { grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 20px; }
   .workspace-side { position: sticky; top: 16px; min-width: 0; }
@@ -52,9 +55,13 @@
      padding 也得跟左欄的卡片一致，否則第一行內容仍對不齊。 */
   .workspace-main {
     min-width: 0; overflow: hidden; margin-top: 0; padding: 14px;
-    opacity: 0; transition: opacity .28s ease .08s;
+    opacity: 0; transform: translateX(18px);
+    transition: opacity .3s ease, transform .3s cubic-bezier(.22,.61,.36,1);
   }
-  .workspace.has-scenario .workspace-main { opacity: 1; }
+  .workspace.has-scenario .workspace-main { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .workspace-main { transition: none; transform: none; }
+  }
   @media (max-width: 820px) {
     .workspace, .workspace.has-scenario { grid-template-columns: 1fr; }
     .workspace-side { position: static; }
@@ -252,6 +259,25 @@
   .browse-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
   .browse-actions .flow-btn { font-size: 15px; padding: 11px 22px; }
 
+  /* 編輯模式：左邊窄的頁清單、右邊該頁的圖層。播放控制在預覽正下方，
+     所以「跳到某頁」與「改那頁」不再分屬兩個畫面。 */
+  .edit-cols {
+    display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+    gap: 16px; align-items: start; margin-top: 14px;
+  }
+  @media (max-width: 900px) { .edit-cols { grid-template-columns: 1fr; } }
+  .edit-pane { min-width: 0; }
+  .edit-pages .flow-row { padding: 7px 9px; font-size: 13px; gap: 8px; }
+  .edit-pages .flow-row-meta { font-size: 11px; }
+  .flow-row-num {
+    flex: 0 0 20px; text-align: right; font: 600 12px/1 ui-monospace, monospace;
+    color: var(--muted);
+  }
+  .flow-row.current .flow-row-num { color: var(--accent); }
+  .layer-asset {
+    flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .layer-name { flex: 0 0 68px; font-size: 13px; color: var(--muted); }
   .edit-tools { display: flex; gap: 4px; margin-left: auto; flex: none; }
   .edit-tools .flow-btn { font-size: 13px; padding: 5px 9px; }
@@ -512,7 +538,7 @@ const patientOverlayBoxes = [];        // { sync, enabled }
 // 投影視窗在投影機上、是給學員看的，任何介面出現在那裡都會被學員看到。
 let currentScenario = null;
 let flowIndex = -1;                    // 指向「會播的頁」的 index；-1 = 尚未開始
-let panelLevel = 'browse';           // 'browse'（確認情境）| 'slides'（頁清單）| 'edit'（圖層）
+let panelLevel = 'browse';           // 'browse'（確認情境）| 'edit'（頁清單＋圖層，同一畫面）
 let editingSlideId = null;             // 'edit' 層正在編哪一頁
 // 片段 key -> 播放函式，由 segmentActions 登記，generate() 時清空
 const segmentPlayers = new Map();
@@ -702,11 +728,16 @@ const REQUIRED_SCENARIO_API = [
   'availableComplications', 'baseCoverage',
 ];
 
+// 常數也要檢查。只檢查函式的話，少一個常數會在很深的地方炸成
+// 「Cannot read properties of undefined」，完全看不出是快取問題——實際踩過。
+const REQUIRED_SCENARIO_DATA = ['LAYER_TYPES', 'LAYER_DEFAULTS', 'LAYER_RANGES', 'ALWAYS_ON_LAYERS'];
+
 function checkScenarioApi() {
   if (typeof Scenarios === 'undefined') {
     return 'js/scenarios.js 未載入（確認檔案存在，且是用本地伺服器開啟）';
   }
-  const missing = REQUIRED_SCENARIO_API.filter(name => typeof Scenarios[name] !== 'function');
+  const missing = REQUIRED_SCENARIO_API.filter(name => typeof Scenarios[name] !== 'function')
+    .concat(REQUIRED_SCENARIO_DATA.filter(name => Scenarios[name] === undefined));
   if (missing.length) {
     return `js/scenarios.js 是舊版，缺少 ${missing.join('、')}。`
       + '請強制重新整理清掉快取（Mac：⌘+Shift+R，Windows：Ctrl+F5）';
@@ -1048,7 +1079,7 @@ function persistScenarioEdit() {
 
   buildFlowSteps();
   // 頁數可能變了，目前這一步未必還存在，收斂回合理範圍
-  const i = beforeStep ? flowSteps.findIndex(s => s.slideId === beforeStep.slideId) : -1;
+  const i = beforeStep ? flowSteps.findIndex(s => s.id === beforeStep.id) : -1;
   flowIndex = i >= 0 ? i : (flowSteps.length ? Math.min(flowIndex, flowSteps.length - 1) : -1);
   renderFlow();
 }
@@ -1081,7 +1112,6 @@ function addSlide() {
   };
   currentScenario.slides.push(slide);
   editingSlideId = slide.id;
-  panelLevel = 'edit';
   persistScenarioEdit();
 }
 
@@ -1103,7 +1133,7 @@ function deleteSlide(slideId) {
     return;
   }
   currentScenario.slides = currentScenario.slides.filter(s => s.id !== slideId);
-  if (editingSlideId === slideId) { editingSlideId = null; panelLevel = 'slides'; }
+  if (editingSlideId === slideId) editingSlideId = null;
   persistScenarioEdit();
 }
 
@@ -1158,6 +1188,20 @@ function removeLayer(type) {
     return;
   }
   slide.layers = slide.layers.filter(l => l.type !== type);
+  persistScenarioEdit();
+}
+
+// 病患通常不會動，拖歪了要能一鍵回到預設——位置存在圖層上，所以改的是同一份資料
+function resetLayerLayout(type, comp) {
+  const defaults = Scenarios.LAYER_DEFAULTS[type];
+  if (!defaults) return;
+  const live = type === 'patient' ? patientOverlay : (comp ? complicationOverlay(comp) : null);
+  if (live) Object.assign(live, defaults);
+  if (type === 'patient') { applyPatientOverlayLayout(); syncPatientOverlayBoxes(); }
+  else { applyComplicationOverlayLayout(); if (chromaRedraw && !chromaFrame) chromaRedraw(); }
+  const slide = editingSlide();
+  const layer = slide && Scenarios.layerOf(slide, type);
+  if (layer) Object.assign(layer, defaults);
   persistScenarioEdit();
 }
 
@@ -2270,18 +2314,22 @@ function buildFlowPanel(doc) {
   const bar = doc.createElement('div');
   bar.className = 'flow-actions toolbar-slot';
   bar.append(
-    flowButton(doc, '‹ 上一步', prevFlow, { disabled: flowIndex <= 0 }),
-    flowButton(doc, flowIndex < 0 ? '開始' : '下一步 ›',
-      () => (flowIndex < 0 ? gotoFlow(0) : nextFlow()),
+    flowButton(doc, '‹ 上一頁', prevFlow, { disabled: flowIndex <= 0 }),
+    flowButton(doc, '下一頁 ›', nextFlow,
       { primary: true, disabled: !flowSteps.length || flowIndex >= flowSteps.length - 1 }),
     flowButton(doc, '停止', stopFlow),
   );
   wrap.appendChild(bar);
 
+  // 兩欄：左邊窄的頁清單（點哪頁預覽就跳哪頁），右邊是該頁的圖層編輯
+  const cols = doc.createElement('div');
+  cols.className = 'edit-cols';
+
   const list = doc.createElement('div');
-  list.className = 'flow-list';
-  const currentSlideId = flowIndex >= 0 ? flowSteps[flowIndex].slideId : null;
-  currentScenario.slides.forEach(slide => {
+  list.className = 'flow-list edit-pages';
+  // flowSteps 現在就是「會播的頁」本身，欄位是 id 不是 slideId
+  const currentSlideId = flowIndex >= 0 && flowSteps[flowIndex] ? flowSteps[flowIndex].id : null;
+  currentScenario.slides.forEach((slide, index) => {
     const row = doc.createElement('div');
     row.className = 'flow-row' + (slide.id === currentSlideId ? ' current' : '')
       + (slide.enabled === false ? ' off' : '');
@@ -2293,6 +2341,11 @@ function buildFlowPanel(doc) {
     box.setAttribute('aria-label', `啟用「${slide.title}」`);
     box.addEventListener('change', () => toggleSlideEnabled(slide.id));
     toggle.appendChild(box);
+
+    // 編號讓人對得上預覽右下角的「N / M」
+    const num = doc.createElement('span');
+    num.className = 'flow-row-num';
+    num.textContent = index + 1;
 
     const name = doc.createElement('span');
     name.className = 'flow-row-title';
@@ -2308,17 +2361,7 @@ function buildFlowPanel(doc) {
       : text ? '字幕'
       : (slide.note ? '等教官' : '純場景');
 
-    const edit = flowButton(doc, '編輯', () => {
-      editingSlideId = slide.id;
-      panelLevel = 'edit';
-      // 同時跳到這一頁：滑桿永遠操作「目前這一步」，不跳的話會變成
-      // 「在編第 3 頁、滑桿卻在改第 1 頁」，預覽與投影也對不上
-      const i = flowSteps.findIndex(s => s.id === slide.id);
-      if (i >= 0) gotoFlow(i); else renderFlow();
-    });
-    edit.classList.add('flow-btn-mini');
-
-    row.append(toggle, name, meta, edit);
+    row.append(toggle, num, name, meta);
 
     // 拖曳排序：把手就是整列，放開時看落在哪一列的上／下半決定插入位置
     row.draggable = true;
@@ -2343,28 +2386,49 @@ function buildFlowPanel(doc) {
       moveSlide(draggedId, to);
     });
 
+    // 點整列＝跳到那一頁：預覽、投影、右邊的圖層編輯全部跟著換，不必再按一次「編輯」
     if (slide.enabled !== false) {
       row.classList.add('clickable');
       row.addEventListener('click', e => {
-        if (e.target.closest('.flow-toggle') || e.target.closest('button')) return;
-        const i = flowSteps.findIndex(s => s.slideId === slide.id);
-        if (i >= 0) gotoFlow(i);
+        if (e.target.closest('.flow-toggle')) return;
+        editingSlideId = slide.id;
+        const i = flowSteps.findIndex(s => s.id === slide.id);
+        if (i >= 0) gotoFlow(i); else renderFlow();
       });
     }
     list.appendChild(row);
   });
-  wrap.appendChild(list);
 
-  const editBar = doc.createElement('div');
-  editBar.className = 'flow-actions';
-  editBar.append(
-    flowButton(doc, '＋ 新增頁', addSlide),
-    flowButton(doc, '重新命名', () => {
-      const name = doc.defaultView.prompt('情境名稱', currentScenario.name);
-      if (name && name.trim()) renameScenario(name.trim());
-    }),
+  const pages = doc.createElement('div');
+  pages.className = 'edit-pane';
+  pages.append(
+    Object.assign(doc.createElement('div'), { className: 'panel-section-title', textContent: '頁' }),
+    list,
+    (() => {
+      const b = doc.createElement('div');
+      b.className = 'flow-actions';
+      b.append(
+        flowButton(doc, '＋ 新增頁', addSlide),
+        flowButton(doc, '重新命名情境', () => {
+          const name = doc.defaultView.prompt('情境名稱', currentScenario.name);
+          if (name && name.trim()) renameScenario(name.trim());
+        }),
+      );
+      return b;
+    })(),
   );
-  wrap.appendChild(editBar);
+
+  // 沒有選定要編哪一頁時，預設編目前這一頁——右欄不該是空的
+  if (!editingSlide() && currentSlideId) editingSlideId = currentSlideId;
+  const layers = doc.createElement('div');
+  layers.className = 'edit-pane edit-layers';
+  layers.append(editingSlide()
+    ? buildSlideEditor(doc)
+    : Object.assign(doc.createElement('p'), {
+        className: 'sidebar-empty', textContent: '左邊點一頁，這裡編它的圖層。' }));
+
+  cols.append(pages, layers);
+  wrap.appendChild(cols);
   return wrap;
 }
 
@@ -2375,13 +2439,8 @@ function buildSlideEditor(doc) {
   const slide = editingSlide();
   if (!slide) return wrap;
 
-  const head = doc.createElement('div');
-  head.className = 'flow-head';
-  head.append(
-    flowButton(doc, '‹ 頁清單', () => { panelLevel = 'slides'; editingSlideId = null; renderFlow(); }),
-    Object.assign(doc.createElement('span'), { className: 'flow-title', textContent: '編輯頁' }),
-  );
-  wrap.appendChild(head);
+  wrap.appendChild(Object.assign(doc.createElement('div'),
+    { className: 'panel-section-title', textContent: `編輯：${slide.title}` }));
 
   const titleRow = doc.createElement('label');
   titleRow.className = 'edit-field';
@@ -2452,17 +2511,27 @@ function buildSlideEditor(doc) {
     }
 
     if (layer.type === 'scene' || layer.type === 'patient') {
-      // 釘選＝所見即所得；留空＝auto，重新產生會換一張
-      const pin = Object.assign(doc.createElement('input'),
-        { type: 'text', className: 'edit-seg', placeholder: '素材 id（留空＝auto）', value: layer.asset || '' });
-      pin.addEventListener('change', () => updateLayer(layer.type, { asset: pin.value.trim() }));
-      row.appendChild(pin);
+      // 素材由情境決定、編輯時換不掉，所以這裡只說明它現在用哪一筆
+      const asset = layerAsset(layer, layer.type === 'scene' ? currentEnvironmentAsset : currentPatientPhotoAsset);
+      row.appendChild(Object.assign(doc.createElement('span'), {
+        className: 'layer-asset',
+        textContent: asset ? (asset.description || asset.id) : '（此情境查無素材）',
+      }));
     }
 
     const tools = doc.createElement('span');
     tools.className = 'edit-tools';
-    // 沒有上下鍵：z 順序由型別決定，投影視窗的 z-index 是寫死的
-    tools.append(flowButton(doc, '✕', () => removeLayer(layer.type)));
+    // 有位置的圖層給一顆歸位：病患通常不會動，拖歪了要能一鍵回到預設
+    if (Object.keys(Scenarios.LAYER_DEFAULTS[layer.type] || {}).length) {
+      const home = flowButton(doc, '歸位', () => resetLayerLayout(layer.type, layer.complication));
+      home.title = '回到預設位置與大小';
+      tools.append(home);
+    }
+    // 場景與病患是每頁必備、由情境決定的，沒有刪除鍵；
+    // 沒有上下鍵則是因為 z 順序由型別決定，投影視窗的 z-index 是寫死的
+    if (!Scenarios.ALWAYS_ON_LAYERS.includes(layer.type)) {
+      tools.append(flowButton(doc, '✕', () => removeLayer(layer.type)));
+    }
     row.appendChild(tools);
     wrap.appendChild(row);
   });
@@ -2470,6 +2539,8 @@ function buildSlideEditor(doc) {
   const addBar = doc.createElement('div');
   addBar.className = 'flow-actions';
   Scenarios.LAYER_TYPES.forEach(type => {
+    // 必備的兩層永遠都在，不必也不能「新增」
+    if (Scenarios.ALWAYS_ON_LAYERS.includes(type)) return;
     if (Scenarios.layerOf(slide, type)) return;   // 每種一頁最多一個
     addBar.append(flowButton(doc, `＋ ${LAYER_LABEL[type]}`, () => addLayer(type)));
   });
@@ -2797,7 +2868,7 @@ function buildBrowseView(doc, preview) {
 
   const actions = doc.createElement('div');
   actions.className = 'browse-actions toolbar-slot';
-  actions.appendChild(flowButton(doc, '編輯', () => { panelLevel = 'slides'; renderFlow(); }));
+  actions.appendChild(flowButton(doc, '編輯', () => { panelLevel = 'edit'; renderFlow(); }));
   wrap.append(actions);
   return wrap;
 }
@@ -2810,8 +2881,7 @@ function renderFlow() {
   let node;
   if (!currentScenario) node = document.createElement('div');
   else if (panelLevel === 'browse') node = buildBrowseView(document, preview);
-  else if (panelLevel === 'edit' && editingSlide()) node = buildSlideEditor(document);
-  else node = buildFlowPanel(document);
+  else node = buildFlowPanel(document);   // 編輯模式：頁清單與圖層編輯在同一層
 
   // 瀏覽模式自己把預覽組進去（標題在上、預覽居中、出口在下）；編輯模式預覽固定在最上面
   box.replaceChildren(...(panelLevel === 'browse' || !preview ? [node] : [preview, node]));

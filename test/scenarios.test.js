@@ -155,7 +155,7 @@ test('超出滑桿範圍的版面值被夾回來，不是整層丟掉', () => {
     id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
     slides: [{ id: 'a', title: 'a', layers: [{ type: 'patient', size: 999, x: -50, y: 'abc' }] }],
   }], OPTIONS);
-  const p = scenarios[0].slides[0].layers[0];
+  const p = S.layerOf(scenarios[0].slides[0], 'patient');
   assert.equal(p.size, S.LAYER_RANGES.size[1]);
   assert.equal(p.x, S.LAYER_RANGES.x[0]);
   assert.equal(p.y, S.LAYER_DEFAULTS.patient.y, '非數字要回到預設值');
@@ -168,8 +168,9 @@ test('一頁每種圖層最多一個，多的丟掉並警告', () => {
       { type: 'patient', size: 50 }, { type: 'patient', size: 90 },
     ] }],
   }], OPTIONS);
-  assert.equal(scenarios[0].slides[0].layers.length, 1);
-  assert.equal(scenarios[0].slides[0].layers[0].size, 50, '保留第一個');
+  const patients = scenarios[0].slides[0].layers.filter(l => l.type === 'patient');
+  assert.equal(patients.length, 1);
+  assert.equal(patients[0].size, 50, '保留第一個');
   assert.match(warnings.join(''), /多個 patient/);
 });
 
@@ -554,5 +555,38 @@ test('遷移：scenario-data.yaml 已經是圖層模型，不含任何 actions',
   assert.equal(JSON.stringify(DATA.scenarios).includes('"actions"'), false);
   for (const s of DATA.scenarios) {
     for (const slide of s.slides) assert.ok(Array.isArray(slide.layers), `${s.id}/${slide.id} 沒有 layers`);
+  }
+});
+
+// ---------- 每頁必備的圖層 ----------
+
+test('沒寫 scene／patient 的頁會自動補上——它們由情境決定，每頁都該有', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'text', text: '交班' }] }],
+  }], OPTIONS);
+  const slide = scenarios[0].slides[0];
+  assert.deepEqual(slide.layers.map(l => l.type), ['scene', 'patient', 'text']);
+  assert.equal(S.layerOf(slide, 'patient').size, S.LAYER_DEFAULTS.patient.size);
+});
+
+test('自動補上的圖層用預設值，且不會覆蓋作者自己寫的那一份', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'patient', size: 30, x: 20 }] }],
+  }], OPTIONS);
+  const slide = scenarios[0].slides[0];
+  assert.equal(S.layerOf(slide, 'patient').size, 30, '作者寫的值要留著');
+  assert.ok(S.layerOf(slide, 'scene'), 'scene 要被補上');
+});
+
+test('內建 7 組情境的每一頁都有 scene 與 patient', () => {
+  const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  for (const s of scenarios) {
+    for (const slide of s.slides) {
+      for (const type of S.ALWAYS_ON_LAYERS) {
+        assert.ok(S.layerOf(slide, type), `${s.id}/${slide.id} 缺 ${type}`);
+      }
+    }
   }
 });

@@ -24,6 +24,10 @@
   // sound 不是視覺層，但它同樣是「這頁存在的東西」，放同一個清單比另立欄位好懂。
   const LAYER_TYPES = ['scene', 'patient', 'greenscreen', 'text', 'sound'];
 
+  // 環境影像與病患照片是「選完情境就決定」的東西，編輯時換不掉，所以每頁必備、不可刪。
+  // normalizeSlide 會替沒寫的頁自動補上；編輯器也不給這兩層刪除鍵。
+  const ALWAYS_ON_LAYERS = ['scene', 'patient'];
+
   // 每種圖層的版面預設值。normalize 會補齊，forExport 只寫非預設值——
   // 否則每個情境檔都會被 size/x/y/tolerance 灌滿，手改時看不出哪裡真的動過。
   const LAYER_DEFAULTS = {
@@ -171,6 +175,11 @@
     if (!layers.length) {
       warn(`${label} 沒有任何有效圖層，已跳過`);
       return null;
+    }
+    // 環境影像與病患照片由情境決定（編輯時不能換素材），所以每一頁都有這兩層。
+    // 沒寫就自動補上，手寫 YAML 才不必每頁重複抄一樣的兩行。
+    for (const type of ALWAYS_ON_LAYERS) {
+      if (!seen.has(type)) layers.push({ type, ...LAYER_DEFAULTS[type] });
     }
     // 排成固定的 z 順序，資料裡的順序不影響輸出——避免有人以為調換陣列就能改上下層
     layers.sort((a, b) => LAYER_TYPES.indexOf(a.type) - LAYER_TYPES.indexOf(b.type));
@@ -551,6 +560,7 @@
 
   return {
     LAYER_TYPES,
+    ALWAYS_ON_LAYERS,
     LAYER_DEFAULTS,
     LAYER_RANGES,
     layerOf,
