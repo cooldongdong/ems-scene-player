@@ -666,7 +666,18 @@ function availabilityFor(env, med) {
   return availabilityCache;
 }
 
-function complicationUsable(comp, env = $('sel-env').value, med = $('sel-med').value) {
+// 環境×急救事件的唯一真相是「目前載入的情境」。舊入口那兩個選單是同一份資料的
+// 第二份副本——載入情境時被寫進去、產生素材時又被讀回來——選單一刪就整條斷掉。
+const currentEnv = () => currentScenario && currentScenario.environment;
+const currentMed = () => currentScenario && currentScenario.medicalEvent;
+
+// 上次抽素材時用的突發狀況集合。編輯是就地改同一個情境物件，所以「有沒有變」
+// 必須跟一份留存的舊值比，不能拿物件跟自己比。
+const complicationsKey = scenario =>
+  (scenario ? Scenarios.complicationsOf(scenario) : []).slice().sort().join('|');
+let lastPickedComps = null;
+
+function complicationUsable(comp, env = currentEnv(), med = currentMed()) {
   const found = availabilityFor(env, med).comps.find(c => c.comp === comp);
   return !!found && found.ok;
 }
@@ -674,9 +685,7 @@ function complicationUsable(comp, env = $('sel-env').value, med = $('sel-med').v
 // 新增動作時要預設一個「真的能演」的狀況；沒有任何可用的就回傳第一個，
 // 讓它顯示成「此情境無素材」而不是靜靜地存進一個壞動作
 function firstUsableComplication() {
-  const env = currentScenario ? currentScenario.environment : $('sel-env').value;
-  const med = currentScenario ? currentScenario.medicalEvent : $('sel-med').value;
-  const ok = availabilityFor(env, med).comps.find(c => c.ok);
+  const ok = availabilityFor(currentEnv(), currentMed()).comps.find(c => c.ok);
   return ok ? ok.comp : optionsFor('complication')[0];
 }
 
@@ -1024,7 +1033,7 @@ function runStep(slide) {
   }
   // segment 省略＝第一段（與資料層的規則一致）
   const segment = green.segment || complicationSegments(green.complication,
-    $('sel-env').value, $('sel-med').value)[0];
+    currentEnv(), currentMed())[0];
   const play = segmentPlayers.get(segmentKey(green.complication, segment));
   if (play) { play(); renderProjectionText(slide); return; }
   // 素材缺了不能靜靜跳過——教官會以為自己按錯
@@ -1078,13 +1087,14 @@ function stopFlow() {
 function persistScenarioEdit() {
   if (!currentScenario) return;
   const beforeStep = flowIndex >= 0 ? flowSteps[flowIndex] : null;
-  const beforeComps = selectedComplications().slice().sort().join('|');
 
   saveScenarioOverride(currentScenario);
   applyScenarioSelection(currentScenario);   // 勾選是推導出來的，頁一動就要跟著變
 
-  // 突發狀況的集合變了才重新產生素材：generate() 會重抽，編輯中每動一下就重抽很擾人
-  if (selectedComplications().slice().sort().join('|') !== beforeComps) generate();
+  // 突發狀況的集合變了才重新產生素材：generate() 會重抽，編輯中每動一下就重抽很擾人。
+  // 比對對象是「上次抽素材時的集合」而不是 currentScenario 的前後值——編輯是就地
+  // 修改同一個物件，等這裡執行時它早就變了，自己跟自己比永遠相等。
+  if (complicationsKey(currentScenario) !== lastPickedComps) generate();
 
   buildFlowSteps();
   // 頁數可能變了，目前這一步未必還存在，收斂回合理範圍
@@ -1238,8 +1248,9 @@ function newScenario() {
   const scenario = {
     id: nextScenarioId(),
     name: '新情境',
-    environment: $('sel-env').value,
-    medicalEvent: $('sel-med').value,
+    // 沒有載入中的情境時（例如剛開頁就按新增）退回第一個選項，而不是留空
+    environment: currentEnv() || environmentGroups().flatMap(([, v]) => v)[0],
+    medicalEvent: currentMed() || optionsFor('medicalEvent')[0],
     slides: [{ id: 's1', title: '抵達現場', enabled: true, layers: [newLayer('scene'), newLayer('patient')] }],
   };
   saveScenarioOverride(scenario);
@@ -2661,7 +2672,7 @@ function previewImage(asset, className) {
 // 位置調得對不對不需要動畫，而且省下一整個 rAF 迴圈。
 function previewGreenscreen(layer, canvas) {
   const segment = layer.segment || complicationSegments(layer.complication,
-    $('sel-env').value, $('sel-med').value)[0];
+    currentEnv(), currentMed())[0];
   const asset = complicationVideoAssets[segmentKey(layer.complication, segment)];
   if (!hasProjectableComplication(asset)) return false;
 
@@ -3128,9 +3139,11 @@ function buildComplicationGroup(comp, seq, segments) {
 // 預覽、投影、圖層編輯器與流程全都讀這些。卡片只是其中一個消費者，不是主人，
 // 所以畫卡片那一半（renderLegacyCards）可以整個拿掉，這一半必須留著。
 function pickAssets() {
-  const env = $('sel-env').value;
-  const med = $('sel-med').value;
-  const comps = selectedComplications();
+  const env = currentEnv();
+  const med = currentMed();
+  // 勾哪些突發狀況由 slides 推導，與 applyScenarioSelection 寫進勾選框的是同一份來源
+  const comps = currentScenario ? Scenarios.complicationsOf(currentScenario) : [];
+  lastPickedComps = complicationsKey(currentScenario);
 
   disposeMediaSources();
   resetMediaPool();
