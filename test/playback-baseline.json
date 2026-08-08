@@ -1,0 +1,458 @@
+{
+  "note": "由 test/playback-parity.test.js 產生。手改無效，請用 UPDATE_BASELINE=1 node --test 重寫。",
+  "scenarios": [
+    {
+      "id": "home-ohca",
+      "environment": "住宅客廳",
+      "medicalEvent": "心跳停止（OHCA）",
+      "complications": [
+        "家屬崩潰哭喊"
+      ],
+      "base": {
+        "environment_video": [
+          "ev001"
+        ],
+        "ambient_sound": [
+          "as003"
+        ],
+        "patient_photo": [
+          "pp001"
+        ],
+        "patient_voice": {
+          "pp001": [
+            "pv001"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "title": "抵達現場",
+          "layers": [
+            "scene",
+            "patient"
+          ],
+          "text": null,
+          "segmentKey": null,
+          "video": [],
+          "voice": []
+        },
+        {
+          "title": "家屬崩潰哭喊",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "家屬崩潰哭喊|1",
+          "video": [
+            "cv001"
+          ],
+          "voice": [
+            "cs001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "studio-selfharm",
+      "environment": "出租套房",
+      "medicalEvent": "自傷（割腕）",
+      "complications": [
+        "情緒失控自傷"
+      ],
+      "base": {
+        "environment_video": [
+          "ev002"
+        ],
+        "ambient_sound": [
+          "as003"
+        ],
+        "patient_photo": [
+          "pp005"
+        ],
+        "patient_voice": {
+          "pp005": [
+            "pv004"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "title": "抵達現場",
+          "layers": [
+            "scene",
+            "patient"
+          ],
+          "text": null,
+          "segmentKey": null,
+          "video": [],
+          "voice": []
+        },
+        {
+          "title": "情緒失控自傷",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "情緒失控自傷|1",
+          "video": [
+            "cv006"
+          ],
+          "voice": [
+            "cs006"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "street-trauma",
+      "environment": "市區街道",
+      "medicalEvent": "外傷出血",
+      "complications": [
+        "旁人嗆聲干擾",
+        "同事欲搬動傷患"
+      ],
+      "base": {
+        "environment_video": [
+          "ev003"
+        ],
+        "ambient_sound": [
+          "as001"
+        ],
+        "patient_photo": [
+          "pp002"
+        ],
+        "patient_voice": {
+          "pp002": [
+            "pv002"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "title": "抵達現場",
+          "layers": [
+            "scene",
+            "patient"
+          ],
+          "text": null,
+          "segmentKey": null,
+          "video": [],
+          "voice": []
+        },
+        {
+          "title": "旁人嗆聲干擾",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "旁人嗆聲干擾|1",
+          "video": [
+            "cv002"
+          ],
+          "voice": [
+            "cs002-f",
+            "cs002-m"
+          ]
+        },
+        {
+          "title": "同事想搬動傷患",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "同事欲搬動傷患|1",
+          "video": [
+            "cv003"
+          ],
+          "voice": [
+            "cs003"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "street-fall",
+      "environment": "市區街道",
+      "medicalEvent": "骨折（墜落）",
+      "complications": [
+        "同事欲搬動傷患"
+      ],
+      "base": {
+        "environment_video": [
+          "ev003"
+        ],
+        "ambient_sound": [
+          "as001"
+        ],
+        "patient_photo": [
+          "pp002"
+        ],
+        "patient_voice": {
+          "pp002": [
+            "pv002"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "title": "抵達現場",
+          "layers": [
+            "scene",
+            "patient"
+          ],
+          "text": null,
+          "segmentKey": null,
+          "video": [],
+          "voice": []
+        },
+        {
+          "title": "同事想搬動傷患",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "同事欲搬動傷患|1",
+          "video": [
+            "cv003"
+          ],
+          "voice": [
+            "cs003"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "intersection-crash",
+      "environment": "市區街道",
+      "medicalEvent": "車禍多重傷",
+      "complications": [
+        "肇事雙方爭吵",
+        "旁人嗆聲干擾"
+      ],
+      "base": {
+        "environment_video": [
+          "ev004"
+        ],
+        "ambient_sound": [
+          "as001"
+        ],
+        "patient_photo": [
+          "pp003"
+        ],
+        "patient_voice": {
+          "pp003": [
+            "pv005"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "title": "抵達現場",
+          "layers": [
+            "scene",
+            "patient"
+          ],
+          "text": null,
+          "segmentKey": null,
+          "video": [],
+          "voice": []
+        },
+        {
+          "title": "肇事雙方爭吵（1/3）",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "肇事雙方爭吵|1",
+          "video": [
+            "cv004-1"
+          ],
+          "voice": [
+            "cs004"
+          ]
+        },
+        {
+          "title": "肇事雙方爭吵（2/3）",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "肇事雙方爭吵|2",
+          "video": [
+            "cv004-2"
+          ],
+          "voice": []
+        },
+        {
+          "title": "肇事雙方爭吵（3/3）",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "肇事雙方爭吵|3",
+          "video": [
+            "cv004-3"
+          ],
+          "voice": []
+        },
+        {
+          "title": "旁人嗆聲干擾",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "旁人嗆聲干擾|1",
+          "video": [
+            "cv002"
+          ],
+          "voice": [
+            "cs002-f",
+            "cs002-m"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "site-trauma",
+      "environment": "工地",
+      "medicalEvent": "外傷出血",
+      "complications": [
+        "同事欲搬動傷患",
+        "旁人嗆聲干擾"
+      ],
+      "base": {
+        "environment_video": [
+          "ev005"
+        ],
+        "ambient_sound": [
+          "as002"
+        ],
+        "patient_photo": [
+          "pp002"
+        ],
+        "patient_voice": {
+          "pp002": [
+            "pv002"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "title": "抵達現場",
+          "layers": [
+            "scene",
+            "patient"
+          ],
+          "text": null,
+          "segmentKey": null,
+          "video": [],
+          "voice": []
+        },
+        {
+          "title": "同事想搬動傷患",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "同事欲搬動傷患|1",
+          "video": [
+            "cv003"
+          ],
+          "voice": [
+            "cs003"
+          ]
+        },
+        {
+          "title": "旁人嗆聲干擾",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "旁人嗆聲干擾|1",
+          "video": [
+            "cv002"
+          ],
+          "voice": [
+            "cs002-f",
+            "cs002-m"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "site-fall",
+      "environment": "工地",
+      "medicalEvent": "骨折（墜落）",
+      "complications": [
+        "同事欲搬動傷患"
+      ],
+      "base": {
+        "environment_video": [
+          "ev005"
+        ],
+        "ambient_sound": [
+          "as002"
+        ],
+        "patient_photo": [
+          "pp002"
+        ],
+        "patient_voice": {
+          "pp002": [
+            "pv002"
+          ]
+        }
+      },
+      "steps": [
+        {
+          "title": "抵達現場",
+          "layers": [
+            "scene",
+            "patient"
+          ],
+          "text": null,
+          "segmentKey": null,
+          "video": [],
+          "voice": []
+        },
+        {
+          "title": "同事想搬動傷患",
+          "layers": [
+            "scene",
+            "patient",
+            "greenscreen"
+          ],
+          "text": null,
+          "segmentKey": "同事欲搬動傷患|1",
+          "video": [
+            "cv003"
+          ],
+          "voice": [
+            "cs003"
+          ]
+        }
+      ]
+    }
+  ]
+}
