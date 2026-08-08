@@ -71,7 +71,11 @@
   /* 瀏覽模式只需要「開始投影」，播放與停止是編輯時才用得到的 */
   .stage-bar.browse #btn-play, .stage-bar.browse #btn-stop { display: none; }
 
-  /* 舊的手動組合入口，預設收起。卡片目前仍是播放機制的宿主，所以只能收不能刪。 */
+  /* 媒體池：實際發出聲音的地方。推到畫面外而不是 display:none／hidden——
+     隱藏的 <video> 在部分瀏覽器不保證會播，而這裡的綠幕影片正是靠原聲發聲。 */
+  #media-pool { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+
+  /* 舊的手動組合入口，預設收起。播放已經搬進媒體池，這裡剩下的是純顯示。 */
   .legacy { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; }
   .legacy > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   .legacy > summary:hover { color: var(--accent); }
@@ -468,8 +472,8 @@
     </section>
   </div>
 
-  <!-- 舊入口：選環境×事件×突發狀況再產生。情境已經涵蓋它，這裡先收起來，
-       下一刀把播放從卡片解耦之後就整批移除（卡片目前仍是播放機制的宿主）。 -->
+  <!-- 舊入口：選環境×事件×突發狀況再產生。情境已經涵蓋它，播放也已經搬進媒體池，
+       所以這整塊現在是純顯示，可以整批移除。 -->
   <details class="legacy" id="legacy">
     <summary>舊的手動組合入口（將移除）</summary>
     <div class="controls">
@@ -493,6 +497,9 @@
     <div class="cards" id="cards"></div>
     <div id="comp-groups"></div>
   </details>
+
+  <!-- 播放的實際宿主。卡片從這一刀起只是說明牌，刪掉不影響任何聲音。 -->
+  <div id="media-pool" aria-hidden="true"></div>
 </div>
 
 <script src="vendor/js-yaml.min.js"></script>
@@ -1017,7 +1024,7 @@ function runStep(slide) {
   const green = Scenarios.layerOf(slide, 'greenscreen');
   if (!green) {
     // 沒有綠幕圖層的頁不該讓上一頁的人物還站在畫面上
-    stopMediaIn($('comp-groups'));
+    stopSegmentMedia();
     stopComplicationProjection();
     renderProjectionText(slide);
     return;
@@ -1028,7 +1035,7 @@ function runStep(slide) {
   const play = segmentPlayers.get(segmentKey(green.complication, segment));
   if (play) { play(); renderProjectionText(slide); return; }
   // 素材缺了不能靜靜跳過——教官會以為自己按錯
-  stopMediaIn($('comp-groups'));
+  stopSegmentMedia();
   stopComplicationProjection();
   setStatus(`這一頁的素材不存在：${green.complication}${green.segment ? ` 片段 ${green.segment}` : ''}`, true);
 }
@@ -1420,23 +1427,18 @@ function imageMedia(file, description, onError) {
   return image;
 }
 
-function playableIn(root) {
-  return root ? root.querySelectorAll('audio[src], video[src]').length > 0 : false;
-}
-
 function updatePlaybackButtons() {
-  const scene = playableIn($('cards'));
-  const groups = $('comp-groups');
+  const scene = poolBase.size > 0;
   let anySegment = false;
   // 每個片段各自一顆播放鈕；靜態綠幕沒有可播媒體，但仍要能觸發投影疊加
-  groups.querySelectorAll('button.play').forEach(button => {
-    const block = button.closest('.comp-segment') || button.closest('.comp-group');
-    const asset = complicationVideoAssets[segmentKey(button.dataset.comp, button.dataset.segment)];
-    button.disabled = !playableIn(block) && !hasProjectableComplication(asset);
+  $('comp-groups').querySelectorAll('button.play').forEach(button => {
+    const key = segmentKey(button.dataset.comp, button.dataset.segment);
+    button.disabled = !poolSegments.has(key)
+      && !hasProjectableComplication(complicationVideoAssets[key]);
     if (!button.disabled) anySegment = true;
   });
   $('btn-play').disabled = !scene;
-  $('btn-stop').disabled = !scene && !playableIn(groups) && !anySegment;
+  $('btn-stop').disabled = !scene && !anySegment;
 }
 
 function updateProjectionButton() {
@@ -2058,6 +2060,81 @@ function mediaFor(asset) {
     options.appendChild(option);
   });
   return options;
+}
+
+// ---------- 媒體池 ----------
+// 播放原本寄居在卡片 DOM 裡：playMediaIn() 去卡片底下找 <audio> 按下去，
+// 所以「刪掉卡片」等於「拔掉喇叭」。媒體池把發聲的地方搬到與畫面無關的容器，
+// 用 segmentKey 當索引，畫面上有沒有卡片都不影響播放。
+//
+// 卡片那邊的媒體元素仍在（有 controls，教官可以自己點來試聽），但不再被程式驅動。
+
+const poolBase = new Map();      // 基本角色 role -> 媒體元素
+const poolSegments = new Map();  // segmentKey -> 該段要一起播的媒體元素
+
+function resetMediaPool() {
+  stopMediaIn($('media-pool'));
+  $('media-pool').innerHTML = '';
+  poolBase.clear();
+  poolSegments.clear();
+}
+
+// 池裡的元素沒有 controls 也不需要拖時間軸，所以直接給 src。
+// 卡片那邊之所以要 loadSeekableAudio 抓成 blob，是為了讓教官能拖著試聽，池不需要。
+function poolMediaFor(asset) {
+  if (!asset || asset.type === 'none') return null;
+  const file = assetPath(asset, assetFiles(asset)[0]);
+  const kind = mediaKind(asset, file);
+  if (!file || (kind !== 'audio' && kind !== 'video')) return null;   // 圖片不發聲
+  const el = document.createElement(kind === 'video' ? 'video' : 'audio');
+  el.src = file;
+  el.dataset.asset = asset.id;   // 池是隱形的，出事時要查得出這顆在放哪一筆素材
+  el.preload = 'auto';
+  el.loop = asset.role === 'ambient_sound';   // 環境聲音要撐滿全場，其餘播完就停
+  $('media-pool').appendChild(el);
+  return el;
+}
+
+function addBaseMedia(role, asset) {
+  const el = poolMediaFor(asset);
+  if (el) poolBase.set(role, el);
+}
+
+// 一段演出的聲音來源只有一個：綠幕素材是影片就用影片原聲，否則才用配音檔。
+// 這條規則原本藏在 buildCard 的 silentVoice——靠「不建那個播放器」來實現，
+// 規則與畫面綁在一起，卡片一刪就跟著消失。這裡把它寫成明文。
+function addSegmentMedia(comp, segment, videoAsset, voiceAsset) {
+  const els = [];
+  const videoEl = poolMediaFor(videoAsset);
+  if (videoEl) els.push(videoEl);
+  const usesOwnAudio = !!videoAsset && mediaKind(videoAsset) === 'video';
+  if (!usesOwnAudio) {
+    const voiceEl = poolMediaFor(voiceAsset);
+    if (voiceEl) els.push(voiceEl);
+  }
+  if (els.length) poolSegments.set(segmentKey(comp, segment), els);
+}
+
+// match 省略＝全部停。傳入判斷函式可只停某一段或某個突發狀況的所有片段。
+function stopSegmentMedia(match = null) {
+  poolSegments.forEach((els, key) => {
+    if (match && !match(key)) return;
+    els.forEach(el => { el.pause(); el.currentTime = 0; });
+  });
+}
+
+const compOfKey = key => key.slice(0, key.lastIndexOf('|'));
+
+// **一次只演一段。** 舊版這件事是撿到的——所有片段的 <audio> 剛好都長在 #comp-groups
+// 底下，「停掉這塊區域」順手就停掉了其他段。池裡各段互相獨立，不明寫就會疊著響。
+// 環境聲音不在停止範圍內：它是整場的底噪，不該被下一段演出打斷。
+function playSegmentMedia(comp, segment) {
+  stopSegmentMedia();
+  (poolSegments.get(segmentKey(comp, segment)) || []).forEach(el => {
+    el.currentTime = 0;
+    el.play().catch(() => {});
+  });
+  startComplicationProjection(comp, segment, 'play');
 }
 
 // clipboard API 在部分環境（非 https、權限未給）會失敗，退回 execCommand，再不行就幫使用者選取
@@ -2974,23 +3051,19 @@ function buildCard({ role, label, result, changed, emptyText, extras, silentVoic
 }
 
 // 播放／停止一段演出：綠幕素材與台詞一起，投影上同時去背疊上該段的人物
-function segmentActions(comp, segment, block, playLabel) {
+function segmentActions(comp, segment, playLabel) {
   const actions = document.createElement('div');
   actions.className = 'comp-group-actions';
   const play = Object.assign(document.createElement('button'), { className: 'play', textContent: playLabel });
   play.dataset.comp = comp;
   play.dataset.segment = segment;
   const stop = Object.assign(document.createElement('button'), { className: 'stop', textContent: '停止' });
-  const playThis = () => {
-    stopMediaIn($('comp-groups'));   // 一次只演一段，接著演下一段就把上一段收掉
-    playMediaIn(block);
-    startComplicationProjection(comp, segment, 'play');
-  };
+  const playThis = () => playSegmentMedia(comp, segment);
   // 流程推進時走的是同一個函式，不是另寫一份——複製一份播放邏輯遲早會跟按鈕長不一樣
   segmentPlayers.set(segmentKey(comp, segment), playThis);
   play.addEventListener('click', playThis);
   stop.addEventListener('click', () => {
-    stopMediaIn(block);
+    stopSegmentMedia(key => key === segmentKey(comp, segment));
     if (activeComplication === comp && activeSegment === segment) stopComplicationProjection();
   });
   actions.append(play, stop);
@@ -3021,12 +3094,12 @@ function buildComplicationGroup(comp, seq, segments) {
   const stopAllInGroup = Object.assign(document.createElement('button'),
     { className: 'stop', textContent: '停止' });
   stopAllInGroup.addEventListener('click', () => {
-    stopMediaIn(section);
+    stopSegmentMedia(key => compOfKey(key) === comp);
     if (activeComplication === comp) stopComplicationProjection();
   });
 
   if (single) {
-    head.appendChild(segmentActions(comp, segments[0].segment, section, '播放這組'));
+    head.appendChild(segmentActions(comp, segments[0].segment, '播放這組'));
   } else {
     const actions = document.createElement('div');
     actions.className = 'comp-group-actions';
@@ -3050,7 +3123,7 @@ function buildComplicationGroup(comp, seq, segments) {
     const label = document.createElement('h3');
     label.className = 'comp-segment-title';
     label.textContent = `片段 ${segment}`;
-    bar.append(label, segmentActions(comp, segment, block, '播放這段'));
+    bar.append(label, segmentActions(comp, segment, '播放這段'));
     block.append(bar, cards);
     section.appendChild(block);
   }
@@ -3065,6 +3138,7 @@ function generate() {
   const groups = $('comp-groups');
   const before = { ...shownIds };
   disposeMediaSources();
+  resetMediaPool();
   stopComplicationProjection();
   cards.innerHTML = '';
   groups.innerHTML = '';
@@ -3097,6 +3171,7 @@ function generate() {
       // 真正的值在進到某一頁時由 loadLayoutFromSlide() 從該頁的圖層讀進來。
       loadLayoutFromSlide(currentSlide());
     }
+    addBaseMedia(role, result && result.asset);
     cards.appendChild(buildCard({
       role, label, result,
       changed: track(role, result),
@@ -3108,11 +3183,12 @@ function generate() {
   comps.forEach((comp, index) => {
     const segmentNumbers = complicationSegments(comp, env, med);
     const playLabel = segmentNumbers.length === 1 ? '播放這組' : '播放這段';
-    const segments = segmentNumbers.map(segment => ({
-      segment,
-      nodes: COMP_ROLES.map(({ role, label }) => {
+    const segments = segmentNumbers.map(segment => {
+      const picked = {};
+      const nodes = COMP_ROLES.map(({ role, label }) => {
         const key = `${role}|${segmentKey(comp, segment)}`;
         const result = pickForRole(role, env, med, [comp], { memoKey: key, segment });
+        picked[role] = result ? result.asset : null;
         if (role === 'complication_video' && result) {
           complicationVideoAssets[segmentKey(comp, segment)] = result.asset;
         }
@@ -3132,8 +3208,10 @@ function generate() {
               ? complicationOverlayControls(comp, segment, playLabel, segmentNumbers.length > 1) : null)
             : null,
         });
-      }),
-    }));
+      });
+      addSegmentMedia(comp, segment, picked.complication_video, picked.complication_voice);
+      return { segment, nodes };
+    });
     groups.appendChild(buildComplicationGroup(comp, index + 1, segments));
   });
 
@@ -3161,29 +3239,17 @@ function generate() {
   setStatus(`第 ${genCount} 次產生 · ${detail}`);
 }
 
-function playMediaIn(root) {
-  root.querySelectorAll('.card').forEach(card => {
-    const selected = card.querySelector('.media-option.selected audio[src], .media-option.selected video[src]');
-    const el = selected || card.querySelector('audio[src], video[src]');
-    if (el) {
-      el.currentTime = 0;
-      el.play().catch(() => {});
-    }
-  });
-}
-
 function stopMediaIn(root) {
   root.querySelectorAll('audio, video').forEach(el => { el.pause(); el.currentTime = 0; });
 }
 
 // 場景底層（環境＋病患）一起播；突發狀況各組自己按，避免多個突發狀況同時炸開
 function playScene() {
-  playMediaIn($('cards'));
+  poolBase.forEach(el => { el.currentTime = 0; el.play().catch(() => {}); });
   playProjection();
 }
 function stopAll() {
-  stopMediaIn($('cards'));
-  stopMediaIn($('comp-groups'));
+  stopMediaIn($('media-pool'));
   stopComplicationProjection();
   stopProjection();
 }
