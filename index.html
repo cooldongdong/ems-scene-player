@@ -386,11 +386,6 @@
   }
   .badge.hit { border-color: var(--ok); color: var(--ok); }
   .badge.only { border-style: dashed; }
-  @keyframes flash {
-    from { border-color: var(--accent); background: var(--accent-dim); }
-    to   { border-color: var(--line); background: var(--panel); }
-  }
-  .card.changed { animation: flash 1.1s ease-out; }
   .card.empty .desc { color: var(--muted); }
   .line {
     margin: 0 0 8px; padding: 8px 12px;
@@ -531,10 +526,8 @@ const SPECIFICITY_TAGS = ['environment', 'medicalEvent', 'complication'];
 let DATA = null;
 // key = 基本角色的 role，或突發狀況的 `role|突發狀況`（同一次可有多組，不能只用 role）
 const lastPicked = {};   // key -> 上一次選到的 id，重新產生時盡量換一個
-const shownIds = {};     // key -> 目前卡片上的 id，用來標出這次換了哪幾張
 const mediaObjectUrls = new Set();
 const mediaLoadControllers = new Set();
-let genCount = 0;
 let currentEnvironmentAsset = null;
 let currentPatientPhotoAsset = null;
 let projectionWindow = null;
@@ -1427,18 +1420,23 @@ function imageMedia(file, description, onError) {
   return image;
 }
 
-function updatePlaybackButtons() {
+// 主控列的兩顆。狀態一律由媒體池決定，不再問畫面上有沒有卡片——
+// 池是在 pickAssets() 裡同步建好的，所以這裡不需要等任何非同步載入。
+function updateStageButtons() {
   const scene = poolBase.size > 0;
-  let anySegment = false;
-  // 每個片段各自一顆播放鈕；靜態綠幕沒有可播媒體，但仍要能觸發投影疊加
+  const anySegment = poolSegments.size > 0
+    || Object.values(complicationVideoAssets).some(hasProjectableComplication);
+  $('btn-play').disabled = !scene;
+  $('btn-stop').disabled = !scene && !anySegment;
+}
+
+// 舊入口每個片段各自一顆播放鈕；靜態綠幕沒有可播媒體，但仍要能觸發投影疊加
+function updateSegmentButtons() {
   $('comp-groups').querySelectorAll('button.play').forEach(button => {
     const key = segmentKey(button.dataset.comp, button.dataset.segment);
     button.disabled = !poolSegments.has(key)
       && !hasProjectableComplication(complicationVideoAssets[key]);
-    if (!button.disabled) anySegment = true;
   });
-  $('btn-play').disabled = !scene;
-  $('btn-stop').disabled = !scene && !anySegment;
 }
 
 function updateProjectionButton() {
@@ -1977,12 +1975,10 @@ async function loadSeekableAudio(el, file) {
     mediaObjectUrls.add(url);
     el.src = url;
     el.load();
-    updatePlaybackButtons();
   } catch (err) {
     if (err.name === 'AbortError' || !el.isConnected) return;
     // 外部音檔若因 CORS 無法 fetch，仍退回原始網址播放。
     el.src = file;
-    updatePlaybackButtons();
   } finally {
     mediaLoadControllers.delete(controller);
   }
@@ -2005,7 +2001,6 @@ function mediaForFile(asset, sourceFile) {
     const fallbacks = type === 'video' ? fallbackFiles(asset) : [];
     if (!fallbacks.length) {
       el.replaceWith(missingMedia(file));
-      updatePlaybackButtons();
       return;
     }
 
@@ -2022,7 +2017,6 @@ function mediaForFile(asset, sourceFile) {
       return wrapper;
     };
     el.replaceWith(tryNextImage());
-    updatePlaybackButtons();
   }, { once: true });
   return el;
 }
@@ -2986,9 +2980,9 @@ function renderFlow() {
   else stopBrowseAutoplay();
 }
 
-function buildCard({ role, label, result, changed, emptyText, extras, silentVoice }) {
+function buildCard({ role, label, result, emptyText, extras, silentVoice }) {
   const card = document.createElement('div');
-  card.className = 'card' + (result ? '' : ' empty') + (changed ? ' changed' : '');
+  card.className = 'card' + (result ? '' : ' empty');
 
   const head = document.createElement('div');
   head.className = 'role';
@@ -3058,10 +3052,9 @@ function segmentActions(comp, segment, playLabel) {
   play.dataset.comp = comp;
   play.dataset.segment = segment;
   const stop = Object.assign(document.createElement('button'), { className: 'stop', textContent: '停止' });
-  const playThis = () => playSegmentMedia(comp, segment);
-  // 流程推進時走的是同一個函式，不是另寫一份——複製一份播放邏輯遲早會跟按鈕長不一樣
-  segmentPlayers.set(segmentKey(comp, segment), playThis);
-  play.addEventListener('click', playThis);
+  // 按鈕與流程推進走的是同一個函式，不是另寫一份——複製一份播放邏輯遲早會長不一樣。
+  // 登記進 segmentPlayers 的動作已經移到 pickAssets()，不再依賴這些按鈕存在。
+  play.addEventListener('click', () => playSegmentMedia(comp, segment));
   stop.addEventListener('click', () => {
     stopSegmentMedia(key => key === segmentKey(comp, segment));
     if (activeComplication === comp && activeSegment === segment) stopComplicationProjection();
@@ -3130,34 +3123,24 @@ function buildComplicationGroup(comp, seq, segments) {
   return section;
 }
 
-function generate() {
+// **決定這次每個角色用哪一筆素材。** 結果填進 currentEnvironmentAsset／
+// currentPatientPhotoAsset／complicationVideoAssets、媒體池與 segmentPlayers——
+// 預覽、投影、圖層編輯器與流程全都讀這些。卡片只是其中一個消費者，不是主人，
+// 所以畫卡片那一半（renderLegacyCards）可以整個拿掉，這一半必須留著。
+function pickAssets() {
   const env = $('sel-env').value;
   const med = $('sel-med').value;
   const comps = selectedComplications();
-  const cards = $('cards');
-  const groups = $('comp-groups');
-  const before = { ...shownIds };
+
   disposeMediaSources();
   resetMediaPool();
   stopComplicationProjection();
-  cards.innerHTML = '';
-  groups.innerHTML = '';
-  complicationOverlayBoxes.length = 0;
-  patientOverlayBoxes.length = 0;
   segmentPlayers.clear();
   currentEnvironmentAsset = null;
   currentPatientPhotoAsset = null;
   Object.keys(complicationVideoAssets).forEach(key => delete complicationVideoAssets[key]);
-  genCount++;
 
-  let changed = 0, locked = 0;
-  const track = (key, result) => {
-    shownIds[key] = result ? result.asset.id : null;
-    if (before[key] !== shownIds[key]) changed++;
-    if (result && result.poolSize === 1) locked++;
-    return genCount > 1 && before[key] !== shownIds[key];
-  };
-
+  const base = [];
   let patientPhoto = null;
   for (const { role, label } of BASE_ROLES) {
     const result = pickForRole(role, env, med, comps, { patientPhoto });
@@ -3172,33 +3155,66 @@ function generate() {
       loadLayoutFromSlide(currentSlide());
     }
     addBaseMedia(role, result && result.asset);
-    cards.appendChild(buildCard({
-      role, label, result,
-      changed: track(role, result),
-      emptyText: '此條件下查無符合的素材，可在 scenario-data.yaml 補一筆通用素材',
-    }));
+    base.push({ role, label, result });
   }
 
-  // 勾選的突發狀況全部展開成群組，不再每次隨機鎖定一個；一組可再拆成好幾個片段
-  comps.forEach((comp, index) => {
+  // 勾選的突發狀況全部展開，不再每次隨機鎖定一個；一組可再拆成好幾個片段
+  const groups = comps.map(comp => {
     const segmentNumbers = complicationSegments(comp, env, med);
-    const playLabel = segmentNumbers.length === 1 ? '播放這組' : '播放這段';
     const segments = segmentNumbers.map(segment => {
-      const picked = {};
-      const nodes = COMP_ROLES.map(({ role, label }) => {
-        const key = `${role}|${segmentKey(comp, segment)}`;
-        const result = pickForRole(role, env, med, [comp], { memoKey: key, segment });
-        picked[role] = result ? result.asset : null;
+      const roles = COMP_ROLES.map(({ role, label }) => {
+        const result = pickForRole(role, env, med, [comp],
+          { memoKey: `${role}|${segmentKey(comp, segment)}`, segment });
         if (role === 'complication_video' && result) {
           complicationVideoAssets[segmentKey(comp, segment)] = result.asset;
         }
-        // COMP_ROLES 的順序是先影片再聲音，所以輪到聲音時已經知道這段的綠幕素材是哪一種
+        return { role, label, result };
+      });
+      const assetOf = wanted => {
+        const found = roles.find(r => r.role === wanted);
+        return found && found.result ? found.result.asset : null;
+      };
+      addSegmentMedia(comp, segment, assetOf('complication_video'), assetOf('complication_voice'));
+      // 靜態綠幕沒有可播媒體，但仍要能觸發投影疊加，所以一律登記
+      segmentPlayers.set(segmentKey(comp, segment), () => playSegmentMedia(comp, segment));
+      return { segment, roles };
+    });
+    return { comp, segmentNumbers, segments };
+  });
+
+  updateStageButtons();
+  updateProjectionButton();
+  renderProjectionScene();
+  return { env, med, comps, base, groups };
+}
+
+// 舊入口的卡片。**純顯示**——播放在 pickAssets() 就已經接到媒體池上了，
+// 這裡畫出來的播放器只是給教官點著試聽。整個函式與 #cards／#comp-groups 一起待刪。
+function renderLegacyCards({ env, med, comps, base, groups }) {
+  const cards = $('cards');
+  const groupsEl = $('comp-groups');
+  cards.innerHTML = '';
+  groupsEl.innerHTML = '';
+  complicationOverlayBoxes.length = 0;
+  patientOverlayBoxes.length = 0;
+
+  base.forEach(({ role, label, result }) => {
+    cards.appendChild(buildCard({
+      role, label, result,
+      emptyText: '此條件下查無符合的素材，可在 scenario-data.yaml 補一筆通用素材',
+    }));
+  });
+
+  groups.forEach(({ comp, segmentNumbers, segments }, index) => {
+    const playLabel = segmentNumbers.length === 1 ? '播放這組' : '播放這段';
+    const built = segments.map(({ segment, roles }) => ({
+      segment,
+      nodes: roles.map(({ role, label, result }) => {
         const greenScreen = complicationVideoAssets[segmentKey(comp, segment)];
         return buildCard({
           role, label, result,
           silentVoice: role === 'complication_voice'
             && !!greenScreen && mediaKind(greenScreen) === 'video',
-          changed: track(key, result),
           // 突發狀況素材有綁環境／事件，所以空卡片多半是「這一組不適合這個情境」而不是缺素材
           emptyText: (segmentNumbers.length === 1 ? `「${comp}」` : `「${comp}」片段 ${segment} `)
             + `在「${env}／${med}」沒有素材：可能是這一組不適合這個情境，`
@@ -3208,35 +3224,24 @@ function generate() {
               ? complicationOverlayControls(comp, segment, playLabel, segmentNumbers.length > 1) : null)
             : null,
         });
-      });
-      addSegmentMedia(comp, segment, picked.complication_video, picked.complication_voice);
-      return { segment, nodes };
-    });
-    groups.appendChild(buildComplicationGroup(comp, index + 1, segments));
+      }),
+    }));
+    groupsEl.appendChild(buildComplicationGroup(comp, index + 1, built));
   });
 
   if (!comps.length) {
     const note = document.createElement('p');
     note.className = 'group-note';
     note.textContent = '未勾選突發狀況，本次沒有突發狀況群組。';
-    groups.appendChild(note);
+    groupsEl.appendChild(note);
   }
 
   $('btn-gen').textContent = '重新產生';
-  updatePlaybackButtons();
-  updateProjectionButton();
-  renderProjectionScene();
-  const summary = comps.map(comp => {
-    const count = complicationSegments(comp, env, med).length;
-    return count > 1 ? `${comp}（${count} 段）` : comp;
-  });
-  const cond = `${env}／${med}` + (comps.length
-    ? `／突發狀況 ${comps.length} 組：${summary.join('、')}`
-    : '／未選突發狀況');
-  const detail = genCount === 1
-    ? cond
-    : `${cond}｜換了 ${changed} 個角色的素材` + (locked ? `，${locked} 個角色只有 1 筆素材可選` : '');
-  setStatus(`第 ${genCount} 次產生 · ${detail}`);
+  updateSegmentButtons();
+}
+
+function generate() {
+  renderLegacyCards(pickAssets());
 }
 
 function stopMediaIn(root) {
