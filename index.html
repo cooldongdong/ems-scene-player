@@ -75,13 +75,7 @@
      隱藏的 <video> 在部分瀏覽器不保證會播，而這裡的綠幕影片正是靠原聲發聲。 */
   #media-pool { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
 
-  /* 舊的手動組合入口，預設收起。播放已經搬進媒體池，這裡剩下的是純顯示。 */
-  .legacy { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; }
-  .legacy > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  .legacy > summary:hover { color: var(--accent); }
-  .legacy[open] > summary { margin-bottom: 16px; }
 
-  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
   .field label.title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
   select {
     width: 100%; padding: 10px 12px; font-size: 15px; font-family: inherit;
@@ -89,21 +83,6 @@
     border: 1px solid var(--line); border-radius: 8px;
   }
   select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .checks { display: flex; flex-wrap: wrap; gap: 8px; }
-  .checks label {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: var(--panel-2); border: 1px solid var(--line);
-    border-radius: 999px; padding: 6px 12px; font-size: 14px; cursor: pointer;
-  }
-  .checks label:has(input:checked) { border-color: var(--accent); background: var(--accent-dim); }
-  .checks input { accent-color: var(--accent); margin: 0; }
-  /* 這個環境×事件沒有素材的突發狀況：選得到卻演不出來最傷，直接擋在選之前 */
-  .checks label.unavailable {
-    opacity: .38; cursor: not-allowed; text-decoration: line-through;
-    border-style: dashed;
-  }
-  .checks label.unavailable input { cursor: not-allowed; }
-  .coverage-note { margin: 14px 0 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
   .coverage-note.warn { color: #ffb27a; }
   .assets-link { margin: 4px 0 0; font-size: 13px; }
   .assets-link a { color: var(--muted); text-decoration: none; }
@@ -287,7 +266,6 @@
   .edit-tools .flow-btn { font-size: 13px; padding: 5px 9px; }
   .edit-danger { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 
-  .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 20px; }
   button {
     font-family: inherit; font-size: 15px; padding: 11px 22px;
     border-radius: 8px; border: 1px solid var(--line);
@@ -297,26 +275,6 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: #1a1005; font-weight: 700; }
   button.primary:hover { filter: brightness(1.08); }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  /* 病患照片疊加：開關與版面微調就放在照片旁邊，邊看照片邊調 */
-  .overlay-controls {
-    margin-top: 8px; padding: 9px 11px;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-    display: grid; gap: 8px;
-  }
-  .overlay-controls:has(input[type="checkbox"]:checked) { border-color: var(--accent); }
-  .overlay-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; cursor: pointer; }
-  .overlay-toggle input { margin: 0; accent-color: var(--accent); }
-  /* 卡片夠寬時滑桿排成兩欄，窄的時候自動疊回一欄 */
-  .overlay-sliders { display: grid; gap: 6px 14px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
-  .overlay-slider {
-    display: grid; grid-template-columns: 32px 1fr 38px; align-items: center;
-    gap: 8px; font-size: 12px; color: var(--muted);
-  }
-  .overlay-slider input { width: 100%; margin: 0; accent-color: var(--accent); }
-  .overlay-slider output { text-align: right; font-family: ui-monospace, monospace; }
-  .overlay-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-  .overlay-hint { font-size: 11px; line-height: 1.5; color: var(--muted); flex: 1 1 140px; }
-  .overlay-buttons { display: flex; gap: 8px; flex: none; }
   .overlay-controls button.reset { font-size: 13px; padding: 5px 12px; white-space: nowrap; }
   .overlay-controls button.preview.on { border-color: var(--accent); background: var(--accent-dim); }
 
@@ -329,108 +287,18 @@
   }
   .status-line { margin: 10px 0 0; }
 
-  /* 同一個事件裡的影片／照片／配音維持由上而下的閱讀順序 */
-  .cards { display: grid; gap: 12px; margin-top: 18px; grid-template-columns: 1fr; }
-  /* 六個突發狀況彼此獨立，排成網格才不會把整頁拉成一長條 */
-  #comp-groups {
-    display: grid; gap: 16px; margin-top: 16px; align-items: start;
-    /* min() 讓視窗比 420px 還窄時軌道能跟著縮，不然會撐出橫向捲動 */
-    grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
-  }
-  .group-note { grid-column: 1 / -1; }
-  /* 一次訓練可能要演多個突發狀況，所以勾選的每一項都各自成一組（影片＋聲音）並列在頁面上 */
-  .comp-group {
-    padding: 14px 16px 16px;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
-  }
-  .comp-group-head {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-    gap: 10px;
-  }
-  .comp-group-title { margin: 0; font-size: 17px; }
-  .comp-group-title .seq {
-    display: inline-block; min-width: 22px; margin-right: 8px; padding: 1px 8px;
-    border-radius: 999px; background: var(--accent); color: #1a1005;
-    font-size: 13px; font-weight: 700; text-align: center;
-  }
-  .comp-group-actions { display: flex; gap: 8px; }
-  .comp-group-actions button { font-size: 13px; padding: 6px 14px; }
-  .comp-group .cards { margin-top: 12px; }
-  .comp-group .card { background: var(--panel); }
-  /* 拆成多段時，每段自己一個可觸發的區塊 */
-  .comp-segment {
-    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
-  }
-  .comp-segment-head {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
-  }
-  .comp-segment-title { margin: 0; font-size: 15px; color: var(--muted); font-weight: 600; }
-  .comp-segment .cards { margin-top: 10px; }
-  .group-note { color: var(--muted); font-size: 14px; margin: 8px 0 0; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    padding: 14px 16px; display: grid; gap: 10px;
-    grid-template-columns: 1fr; align-content: start; min-width: 0;
-  }
   .role {
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
     font-size: 12px; color: var(--muted);
   }
   .role strong { font-size: 15px; color: var(--text); }
-  .desc { margin: 0 0 6px; font-size: 14px; }
   /* 素材路徑是不能斷行的長字串，窄視窗會把卡片撐出橫向捲動 */
   .meta { font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
-  .badge {
-    display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--muted); margin-left: 8px;
-  }
   .badge.hit { border-color: var(--ok); color: var(--ok); }
-  .badge.only { border-style: dashed; }
   .card.empty .desc { color: var(--muted); }
-  .line {
-    margin: 0 0 8px; padding: 8px 12px;
-    border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
-    background: var(--panel-2); font-size: 15px;
-  }
-  .tts {
-    margin: 0 0 8px; padding: 8px 12px;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-  }
-  .tts summary { cursor: pointer; font-size: 13px; color: var(--muted); }
-  .tts[open] summary { margin-bottom: 8px; color: var(--text); }
-  .tts-meta { font-size: 12px; color: var(--muted); }
-  .tts pre {
-    margin: 8px 0 10px; padding: 10px; border-radius: 6px;
-    background: var(--bg); border: 1px solid var(--line);
-    font-size: 13px; line-height: 1.75; white-space: pre-wrap; word-break: break-word;
-  }
   .tts button.copy { font-size: 13px; padding: 5px 12px; }
-  .none-note {
-    color: var(--muted); font-size: 13px; padding: 9px 12px;
-    border: 1px dashed var(--line); border-radius: 8px;
-  }
   audio { width: 100%; margin-top: 4px; }
-  .media-options { display: grid; gap: 8px; }
-  .media-option {
-    padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--panel-2);
-  }
   .media-option.selected { border-color: var(--accent); }
-  .media-option-label { color: var(--muted); font-size: 12px; word-break: break-all; }
-  /* 直式綠幕素材有 720×1280，一定要限高，否則一張卡就比一個螢幕還長 */
-  .card img {
-    display: block; width: auto; max-width: 100%; max-height: 190px;
-    border-radius: 8px; border: 1px solid var(--line);
-  }
-  /* 影片保持滿寬，控制列才夠空間；畫面本身用 contain 不裁切 */
-  .card video {
-    display: block; width: 100%; height: 190px;
-    object-fit: contain; background: #0d0f12;
-    border-radius: 8px; border: 1px solid var(--line);
-  }
-  .missing { color: var(--accent); font-size: 13px; overflow-wrap: anywhere; }
-  .fallback-media { display: grid; gap: .45rem; }
-  .fallback-note { color: #9a5b00; font-size: .85rem; }
 </style>
 </head>
 <body>
@@ -467,33 +335,7 @@
     </section>
   </div>
 
-  <!-- 舊入口：選環境×事件×突發狀況再產生。情境已經涵蓋它，播放也已經搬進媒體池，
-       所以這整塊現在是純顯示，可以整批移除。 -->
-  <details class="legacy" id="legacy">
-    <summary>舊的手動組合入口（將移除）</summary>
-    <div class="controls">
-      <div class="field">
-        <label class="title" for="sel-env">環境（單選）</label>
-        <select id="sel-env"></select>
-      </div>
-      <div class="field">
-        <label class="title" for="sel-med">急救事件（單選）</label>
-        <select id="sel-med"></select>
-      </div>
-      <div class="field">
-        <span class="title">突發狀況（可複選）</span>
-        <div class="checks" id="checks-comp"></div>
-      </div>
-    </div>
-    <p class="coverage-note" id="coverage-note"></p>
-    <div class="actions">
-      <button class="primary" id="btn-gen" disabled>產生情境</button>
-    </div>
-    <div class="cards" id="cards"></div>
-    <div id="comp-groups"></div>
-  </details>
-
-  <!-- 播放的實際宿主。卡片從這一刀起只是說明牌，刪掉不影響任何聲音。 -->
+  <!-- 播放的實際宿主。 -->
   <div id="media-pool" aria-hidden="true"></div>
 </div>
 
@@ -549,7 +391,7 @@ let currentScenario = null;
 let flowIndex = -1;                    // 指向「會播的頁」的 index；-1 = 尚未開始
 let panelLevel = 'browse';           // 'browse'（確認情境）| 'edit'（頁清單＋圖層，同一畫面）
 let editingSlideId = null;             // 'edit' 層正在編哪一頁
-// 片段 key -> 播放函式，由 segmentActions 登記，generate() 時清空
+// 片段 key -> 播放函式，由 pickAssets() 登記與清空
 const segmentPlayers = new Map();
 
 // 綠幕疊加：每個突發狀況各自記版面與去背容差，重新產生情境後沿用
@@ -589,18 +431,12 @@ function currentSlide() {
 }
 
 // 滑桿下方那行字要誠實：沒載入情境時調了不會被記住
-function layoutHint() {
-  return currentScenario && currentSlide()
-    ? '調整會即時反映在投影視窗，並存進這一頁的圖層'
-    : '調整會即時反映在投影視窗；載入情境後才會被記住';
-}
-
 // 進到某一頁時，把該頁圖層上的版面搬進執行期物件（渲染程式讀的還是這兩個物件）
 function loadLayoutFromSlide(slide) {
   Object.assign(patientOverlay, PATIENT_OVERLAY_DEFAULTS);
-  // **就地覆寫，不能 delete 再重建。** 卡片上的滑桿在 generate() 時就抓住了這些物件的
-  // 參考（overlaySliderRows 直接改傳進去的 state），換成新物件的話滑桿會改到孤兒，
-  // 投影與預覽都不會動——這正是這裡曾經踩過的坑。
+  // **就地覆寫，不能 delete 再重建。** 投影的去背迴圈與預覽都抓著這兩個物件的參考
+  // （chromaRedraw 每一幀讀 complicationOverlay(comp).tolerance），換成新物件的話
+  // 它們會繼續讀舊的那個孤兒，畫面就不會跟著動——這裡曾經踩過。
   Object.values(complicationOverlays).forEach(l => Object.assign(l, COMP_OVERLAY_DEFAULTS));
 
   const patient = slide && Scenarios.layerOf(slide, 'patient');
@@ -706,29 +542,6 @@ function missingBaseLabels(env, med) {
   return Scenarios.BASE_ROLES.filter(r => base[r] === 'missing').map(r => ROLE_LABEL[r]);
 }
 
-// 依目前的環境×事件更新突發狀況勾選框：沒素材的直接停用並說明原因
-function refreshComplicationAvailability() {
-  if (!DATA) return;
-  const env = $('sel-env').value;
-  const med = $('sel-med').value;
-  document.querySelectorAll('#checks-comp label').forEach(label => {
-    const input = label.querySelector('input');
-    const usable = complicationUsable(input.value, env, med);
-    input.disabled = !usable;
-    label.classList.toggle('unavailable', !usable);
-    label.title = usable ? '' : `${env}／${med} 沒有「${input.value}」的綠幕素材，勾了也不會出現`;
-    // 條件變動後，原本勾著的可能已經不可用——留著會產生一組空的突發狀況卡
-    if (!usable && input.checked) input.checked = false;
-  });
-  const missing = missingBaseLabels(env, med);
-  const note = $('coverage-note');
-  const usableCount = availabilityFor(env, med).comps.filter(c => c.ok).length;
-  note.textContent = missing.length
-    ? `這個組合缺：${missing.join('、')}　·　可用的突發狀況 ${usableCount} 個`
-    : `四項基本素材齊全　·　可用的突發狀況 ${usableCount} 個`;
-  note.classList.toggle('warn', missing.length > 0);
-}
-
 const $ = id => document.getElementById(id);
 const status = $('status');
 
@@ -763,22 +576,6 @@ function checkScenarioApi() {
   return null;
 }
 
-// 素材頁的覆蓋表點一格會帶 ?env=&med= 過來。值對不上就當作沒帶——
-// 網址是使用者能亂改的東西，照單全收會讓選單進到一個不存在的狀態。
-function applyQueryCondition() {
-  const params = new URLSearchParams(location.search);
-  const env = params.get('env');
-  const med = params.get('med');
-  const envs = environmentGroups().flatMap(([, values]) => values);
-  let changed = false;
-  if (env && envs.includes(env)) { $('sel-env').value = env; changed = true; }
-  if (med && optionsFor('medicalEvent').includes(med)) { $('sel-med').value = med; changed = true; }
-  if (changed) {
-    refreshComplicationAvailability();
-    syncScenarioActive();
-  }
-}
-
 async function init() {
   // 讀檔與後續處理分開接錯：只有真的抓不到檔才該建議「用本地伺服器開啟」。
   // 混在一起的話，任何錯誤都會被說成伺服器問題，把人指向錯的方向。
@@ -800,10 +597,9 @@ async function init() {
     if (apiProblem) throw new Error(apiProblem);
     DATA = jsyaml.load(text);
     if (!DATA || !Array.isArray(DATA.assets)) throw new Error('scenario-data.yaml 缺少 assets 陣列');
-    buildControls();
-    applyQueryCondition();
+    buildScenarios();
+    syncScenarioActive();
     renderFlow();   // 先把版面收成「未選情境」的樣子
-    $('btn-gen').disabled = false;
     setStatus(`素材庫已載入：${DATA.assets.length} 筆`);
   } catch (err) {
     setStatus('初始化失敗：' + err.message, true);
@@ -830,40 +626,6 @@ function environmentGroups() {
   return [['未分類', optionsFor('environment')]];
 }
 
-function buildControls() {
-  const env = $('sel-env');
-  env.innerHTML = '';
-  for (const [group, values] of environmentGroups()) {
-    const optgroup = Object.assign(document.createElement('optgroup'), { label: group });
-    for (const value of values) {
-      optgroup.appendChild(Object.assign(document.createElement('option'), { value, textContent: value }));
-    }
-    env.appendChild(optgroup);
-  }
-
-  const med = $('sel-med');
-  med.innerHTML = '';
-  for (const value of optionsFor('medicalEvent')) {
-    med.appendChild(Object.assign(document.createElement('option'), { value, textContent: value }));
-  }
-  const box = $('checks-comp');
-  box.innerHTML = '';
-  for (const v of optionsFor('complication')) {
-    const label = document.createElement('label');
-    const input = Object.assign(document.createElement('input'), { type: 'checkbox', value: v });
-    label.append(input, document.createTextNode(v));
-    box.appendChild(label);
-  }
-  box.addEventListener('change', syncScenarioActive);
-
-  refreshComplicationAvailability();
-  buildScenarios();
-  syncScenarioActive();
-}
-
-function selectedComplications() {
-  return [...document.querySelectorAll('#checks-comp input:checked')].map(i => i.value);
-}
 
 // ---------- 情境（scenario）----------
 // 一個情境 = 素材組合（環境×急救事件）＋ 一串照順序演的簡報頁。
@@ -942,23 +704,11 @@ function buildScenarios() {
   list.appendChild(buildScenarioTools(document));
 }
 
-// 只設定三個選單，不產生情境。切換某頁啟用時會單獨用到它。
-function applyScenarioSelection(scenario) {
-  // 勾哪些突發狀況由 slides 推導，不讀情境上的欄位——那個欄位刻意不存在
-  const comps = Scenarios.complicationsOf(scenario);
-  $('sel-env').value = scenario.environment;
-  $('sel-med').value = scenario.medicalEvent;
-  document.querySelectorAll('#checks-comp input').forEach(input => {
-    input.checked = comps.includes(input.value);
-  });
-  syncScenarioActive();
-}
-
 function loadScenario(scenario) {
   // 每次都拿最新的那一份（可能剛被覆蓋過），不要抱著按鈕建立時的舊物件
   currentScenario = activeScenarios.find(s => s.id === scenario.id) || scenario;
-  applyScenarioSelection(currentScenario);
-  generate();                 // 素材要先產生，segmentPlayers 才有東西可登記
+  syncScenarioActive();
+  pickAssets();               // 素材要先挑好，segmentPlayers 才有東西可登記
   buildFlowSteps();
   flowIndex = 0;          // 直接停在第一頁，右欄一出現就有畫面可看
   panelLevel = 'browse';
@@ -967,31 +717,25 @@ function loadScenario(scenario) {
   runStep(flowSteps[0]);
 }
 
-// 手動改選單 = 離開情境，流程跟著失效，否則流程會指向已經不存在的素材
+// 回到「沒有載入任何情境」的狀態。刪掉目前這一組、或匯入把它換掉時會走到——
+// 流程必須跟著失效，否則它會指向已經不存在的素材。
 function leaveScenario() {
   if (!currentScenario) return;
   currentScenario = null;
   flowSteps = [];
   flowIndex = -1;
   panelLevel = 'browse';
+  syncScenarioActive();
   renderFlow();
 }
 
-// 手動改選單後，亮起來的情境要跟著熄掉，否則會誤以為現在還是那一組
+// 清單上亮起來的那一顆＝目前載入的情境。舊版是反推的（比對環境×事件×突發狀況
+// 集合），因為當時可以手動改選單、進到一個不屬於任何情境的狀態；現在沒有那條路了。
 function syncScenarioActive() {
   if (!DATA) return;
-  const env = $('sel-env').value;
-  const med = $('sel-med').value;
-  const picked = selectedComplications();
-  const matches = scenario => scenario.environment === env
-    && scenario.medicalEvent === med
-    && (() => {
-      const comps = Scenarios.complicationsOf(scenario);
-      return comps.length === picked.length && comps.every(c => picked.includes(c));
-    })();
-
   [...$('preset-list').children].forEach((btn, i) => {
-    btn.classList.toggle('active', !!activeScenarios[i] && matches(activeScenarios[i]));
+    const scenario = activeScenarios[i];
+    btn.classList.toggle('active', !!scenario && !!currentScenario && scenario.id === currentScenario.id);
   });
 }
 
@@ -1089,12 +833,11 @@ function persistScenarioEdit() {
   const beforeStep = flowIndex >= 0 ? flowSteps[flowIndex] : null;
 
   saveScenarioOverride(currentScenario);
-  applyScenarioSelection(currentScenario);   // 勾選是推導出來的，頁一動就要跟著變
 
-  // 突發狀況的集合變了才重新產生素材：generate() 會重抽，編輯中每動一下就重抽很擾人。
+  // 突發狀況的集合變了才重新挑素材：pickAssets() 會重抽，編輯中每動一下就重抽很擾人。
   // 比對對象是「上次抽素材時的集合」而不是 currentScenario 的前後值——編輯是就地
   // 修改同一個物件，等這裡執行時它早就變了，自己跟自己比永遠相等。
-  if (complicationsKey(currentScenario) !== lastPickedComps) generate();
+  if (complicationsKey(currentScenario) !== lastPickedComps) pickAssets();
 
   buildFlowSteps();
   // 頁數可能變了，目前這一步未必還存在，收斂回合理範圍
@@ -1413,24 +1156,6 @@ function absoluteAssetUrl(file) {
   }
 }
 
-function missingMedia(file) {
-  const note = document.createElement('div');
-  note.className = 'missing';
-  note.textContent = '找不到素材檔：' + file;
-  return note;
-}
-
-function imageMedia(file, description, onError) {
-  const image = document.createElement('img');
-  image.src = file;
-  image.alt = description || '環境圖片';
-  image.addEventListener('error', () => {
-    const replacement = onError ? onError() : missingMedia(file);
-    image.replaceWith(replacement);
-  }, { once: true });
-  return image;
-}
-
 // 主控列的兩顆。狀態一律由媒體池決定，不再問畫面上有沒有卡片——
 // 池是在 pickAssets() 裡同步建好的，所以這裡不需要等任何非同步載入。
 function updateStageButtons() {
@@ -1439,15 +1164,6 @@ function updateStageButtons() {
     || Object.values(complicationVideoAssets).some(hasProjectableComplication);
   $('btn-play').disabled = !scene;
   $('btn-stop').disabled = !scene && !anySegment;
-}
-
-// 舊入口每個片段各自一顆播放鈕；靜態綠幕沒有可播媒體，但仍要能觸發投影疊加
-function updateSegmentButtons() {
-  $('comp-groups').querySelectorAll('button.play').forEach(button => {
-    const key = segmentKey(button.dataset.comp, button.dataset.segment);
-    button.disabled = !poolSegments.has(key)
-      && !hasProjectableComplication(complicationVideoAssets[key]);
-  });
 }
 
 function updateProjectionButton() {
@@ -1752,7 +1468,6 @@ function stopComplicationProjection() {
     });
     layer.replaceChildren();
   }
-  refreshComplicationPreviewButtons();
 }
 
 // 綠幕素材可以是影片，也可以是一張綠幕劇照
@@ -1854,7 +1569,6 @@ function startComplicationProjection(comp, segment, mode) {
     video.addEventListener('error', fail, { once: true });
   }
 
-  refreshComplicationPreviewButtons();
   return true;
 }
 
@@ -1974,105 +1688,10 @@ function disposeMediaSources() {
   mediaObjectUrls.clear();
 }
 
-async function loadSeekableAudio(el, file) {
-  const controller = new AbortController();
-  mediaLoadControllers.add(controller);
-  try {
-    const response = await fetch(file, { signal: controller.signal });
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    const blob = await response.blob();
-    if (!el.isConnected) return;
-    const url = URL.createObjectURL(blob);
-    mediaObjectUrls.add(url);
-    el.src = url;
-    el.load();
-  } catch (err) {
-    if (err.name === 'AbortError' || !el.isConnected) return;
-    // 外部音檔若因 CORS 無法 fetch，仍退回原始網址播放。
-    el.src = file;
-  } finally {
-    mediaLoadControllers.delete(controller);
-  }
-}
-
-function mediaForFile(asset, sourceFile) {
-  const file = assetPath(asset, sourceFile);
-  const type = mediaKind(asset, file);
-  if (type === 'image') return imageMedia(file, asset.description);
-
-  const el = document.createElement(type === 'video' ? 'video' : 'audio');
-  el.controls = true;
-  el.loop = asset.role === 'ambient_sound';
-  if (type === 'audio') {
-    loadSeekableAudio(el, file);
-  } else {
-    el.src = file;
-  }
-  el.addEventListener('error', () => {
-    const fallbacks = type === 'video' ? fallbackFiles(asset) : [];
-    if (!fallbacks.length) {
-      el.replaceWith(missingMedia(file));
-      return;
-    }
-
-    let index = 0;
-    const tryNextImage = () => {
-      const file = fallbacks[index++];
-      if (!file) return missingMedia(assetPath(asset) + '（圖片 fallback 也無法載入）');
-      const wrapper = document.createElement('div');
-      wrapper.className = 'fallback-media';
-      const note = document.createElement('div');
-      note.className = 'fallback-note';
-      note.textContent = '影片無法載入，已改用圖片：' + file;
-      wrapper.append(note, imageMedia(file, asset.description, tryNextImage));
-      return wrapper;
-    };
-    el.replaceWith(tryNextImage());
-  }, { once: true });
-  return el;
-}
-
-function mediaFor(asset) {
-  // type: none = 該情境刻意沒有這個素材（例如住宅 OHCA 沒有環境聲音）
-  const files = assetFiles(asset);
-  if (asset.type === 'none' || !files.length) {
-    const note = document.createElement('div');
-    note.className = 'none-note';
-    note.textContent = '此情境無此素材';
-    return note;
-  }
-  if (files.length === 1) return mediaForFile(asset, files[0]);
-
-  const options = document.createElement('div');
-  options.className = 'media-options';
-  files.forEach((file, index) => {
-    const option = document.createElement('div');
-    option.className = 'media-option';
-    const label = document.createElement('div');
-    label.className = 'media-option-label';
-    label.textContent = `版本 ${index + 1}：${file}`;
-    const media = mediaForFile(asset, file);
-    if (media.tagName === 'AUDIO' || media.tagName === 'VIDEO') {
-      media.addEventListener('play', () => {
-        options.querySelectorAll('audio, video').forEach(other => {
-          if (other !== media) other.pause();
-        });
-        options.querySelectorAll('.media-option').forEach(item => item.classList.remove('selected'));
-        option.classList.add('selected');
-      });
-    }
-    option.append(label, media);
-    options.appendChild(option);
-  });
-  return options;
-}
-
 // ---------- 媒體池 ----------
-// 播放原本寄居在卡片 DOM 裡：playMediaIn() 去卡片底下找 <audio> 按下去，
-// 所以「刪掉卡片」等於「拔掉喇叭」。媒體池把發聲的地方搬到與畫面無關的容器，
-// 用 segmentKey 當索引，畫面上有沒有卡片都不影響播放。
-//
-// 卡片那邊的媒體元素仍在（有 controls，教官可以自己點來試聽），但不再被程式驅動。
+// 播放曾經寄居在舊入口的卡片 DOM 裡（去卡片底下找 <audio> 按下去），所以那些卡片
+// 一刪就等於拔掉喇叭。媒體池把發聲的地方搬到與畫面完全無關的容器，用 segmentKey
+// 當索引——畫面怎麼改都不影響播放。
 
 const poolBase = new Map();      // 基本角色 role -> 媒體元素
 const poolSegments = new Map();  // segmentKey -> 該段要一起播的媒體元素
@@ -2084,8 +1703,8 @@ function resetMediaPool() {
   poolSegments.clear();
 }
 
-// 池裡的元素沒有 controls 也不需要拖時間軸，所以直接給 src。
-// 卡片那邊之所以要 loadSeekableAudio 抓成 blob，是為了讓教官能拖著試聽，池不需要。
+// 池裡的元素沒有 controls 也不需要拖時間軸，所以直接給 src——不必像舊卡片那樣
+// 先把整個檔抓成 blob 才能 seek。
 function poolMediaFor(asset) {
   if (!asset || asset.type === 'none') return null;
   const file = assetPath(asset, assetFiles(asset)[0]);
@@ -2106,8 +1725,8 @@ function addBaseMedia(role, asset) {
 }
 
 // 一段演出的聲音來源只有一個：綠幕素材是影片就用影片原聲，否則才用配音檔。
-// 這條規則原本藏在 buildCard 的 silentVoice——靠「不建那個播放器」來實現，
-// 規則與畫面綁在一起，卡片一刪就跟著消失。這裡把它寫成明文。
+// 這條規則原本藏在舊卡片的 silentVoice——靠「不建那個播放器」來實現，規則與畫面
+// 綁在一起。搬進池之後它是明文的一行判斷。
 function addSegmentMedia(comp, segment, videoAsset, voiceAsset) {
   const els = [];
   const videoEl = poolMediaFor(videoAsset);
@@ -2130,7 +1749,7 @@ function stopSegmentMedia(match = null) {
 
 const compOfKey = key => key.slice(0, key.lastIndexOf('|'));
 
-// **一次只演一段。** 舊版這件事是撿到的——所有片段的 <audio> 剛好都長在 #comp-groups
+// **一次只演一段。** 舊版這件事是撿到的——所有片段的 <audio> 剛好都長在同一棵子樹
 // 底下，「停掉這塊區域」順手就停掉了其他段。池裡各段互相獨立，不明寫就會疊著響。
 // 環境聲音不在停止範圍內：它是整場的底噪，不該被下一段演出打斷。
 function playSegmentMedia(comp, segment) {
@@ -2166,192 +1785,6 @@ function selectNode(node) {
   sel.removeAllRanges();
   sel.addRange(range);
 }
-
-// 配音 prompt（ElevenLabs Eleven v3），收在 <details> 裡，需要重新生成配音時展開複製
-function ttsBlock(tts) {
-  const box = document.createElement('details');
-  box.className = 'tts';
-  const sum = document.createElement('summary');
-  sum.textContent = `${tts.model || 'TTS'} 配音 prompt`;
-  box.appendChild(sum);
-
-  for (const [key, label] of [['voice', 'voice'], ['settings', 'settings']]) {
-    if (!tts[key]) continue;
-    const row = document.createElement('div');
-    row.className = 'tts-meta';
-    row.textContent = `${label}：${tts[key]}`;
-    box.appendChild(row);
-  }
-  const pre = document.createElement('pre');
-  pre.textContent = (tts.prompt || '').trim();
-  box.appendChild(pre);
-
-  const btn = document.createElement('button');
-  btn.className = 'copy';
-  btn.textContent = '複製 prompt';
-  btn.addEventListener('click', async () => {
-    btn.textContent = (await copyText(pre.textContent)) ? '已複製' : '複製失敗，已幫你選取，按 Ctrl+C';
-    if (btn.textContent !== '已複製') selectNode(pre);
-    setTimeout(() => { btn.textContent = '複製 prompt'; }, 2500);
-  });
-  box.appendChild(btn);
-  return box;
-}
-
-// 疊加開關與大小／位置滑桿，掛在病患照片卡內；設定值存在 patientOverlay，重新產生後沿用
-// 病患照片與綠幕人物共用的滑桿列；sync() 讓「重設版面」能把滑桿一起拉回去
-// doc 參數保留：把面板長到另一個 document（例如之後要再放回投影視窗）時，
-// 跨 document 的節點不能直接 append（要先 importNode），從源頭建對比較不會出錯。
-function overlaySliderRows(state, specs, ariaPrefix, onChange, doc = document) {
-  const wrap = doc.createElement('div');
-  wrap.className = 'overlay-sliders';
-  const rows = {};
-  const text = ({ key, unit }) => state[key] + (unit === undefined ? '%' : unit);
-  for (const spec of specs) {
-    const { key, label, min, max } = spec;
-    const row = doc.createElement('div');
-    row.className = 'overlay-slider';
-    const name = doc.createElement('span');
-    name.textContent = label;
-    const input = Object.assign(doc.createElement('input'),
-      { type: 'range', min, max, step: 1, value: state[key] });
-    input.setAttribute('aria-label', ariaPrefix + label);
-    const value = doc.createElement('output');
-    value.textContent = text(spec);
-    input.addEventListener('input', () => {
-      state[key] = Number(input.value);
-      value.textContent = text(spec);
-      onChange();
-    });
-    rows[key] = { input, value };
-    row.append(name, input, value);
-    wrap.appendChild(row);
-  }
-  return {
-    node: wrap,
-    sync() {
-      for (const spec of specs) {
-        rows[spec.key].input.value = state[spec.key];
-        rows[spec.key].value.textContent = text(spec);
-      }
-    },
-  };
-}
-
-function overlayFoot(hintText, reset, extraButton, doc = document) {
-  const foot = doc.createElement('div');
-  foot.className = 'overlay-foot';
-  const hint = doc.createElement('span');
-  hint.className = 'overlay-hint';
-  hint.textContent = hintText;
-  const buttons = doc.createElement('span');
-  buttons.className = 'overlay-buttons';
-  if (extraButton) buttons.appendChild(extraButton);
-  buttons.appendChild(reset);
-  foot.append(hint, buttons);
-  return foot;
-}
-
-function patientOverlayControls(doc = document, hintText = layoutHint()) {
-  const box = doc.createElement('div');
-  box.className = 'overlay-controls';
-
-  const toggle = doc.createElement('label');
-  toggle.className = 'overlay-toggle';
-  const checkbox = Object.assign(doc.createElement('input'),
-    { type: 'checkbox', checked: patientOverlay.enabled });
-  checkbox.addEventListener('change', () => {
-    patientOverlay.enabled = checkbox.checked;
-    // 載入情境時，「要不要疊病患」就是「這頁有沒有 patient 圖層」，
-    // 不另外存一個開關狀態——兩份真相遲早對不起來
-    const slide = currentSlide();
-    if (currentScenario && slide) {
-      const editingBefore = editingSlideId;
-      editingSlideId = slide.id;
-      if (checkbox.checked) addLayer('patient'); else removeLayer('patient');
-      editingSlideId = editingBefore;
-    }
-    renderProjectionPatient();
-    syncPatientOverlayBoxes();
-  });
-  toggle.append(checkbox, doc.createTextNode('疊加到投影視窗'));
-  box.appendChild(toggle);
-
-  const applyChange = () => {
-    applyPatientOverlayLayout();
-    syncPatientOverlayBoxes();
-    updatePreviewLayout();
-    persistLayerLayout('patient');
-  };
-  const sliders = overlaySliderRows(patientOverlay, PATIENT_OVERLAY_SLIDERS, '病患照片', applyChange, doc);
-  box.appendChild(sliders.node);
-  patientOverlayBoxes.push({ sync: sliders.sync, enabled: checkbox });
-
-  const reset = Object.assign(doc.createElement('button'),
-    { className: 'reset', type: 'button', textContent: '重設版面' });
-  reset.addEventListener('click', () => {
-    Object.assign(patientOverlay, PATIENT_OVERLAY_DEFAULTS);
-    applyChange();
-  });
-  box.appendChild(overlayFoot(hintText, reset, null, doc));
-  return box;
-}
-
-function refreshComplicationPreviewButtons() {
-  document.querySelectorAll('#comp-groups button.preview').forEach(button => {
-    const on = complicationPreviewing
-      && button.dataset.comp === activeComplication
-      && Number(button.dataset.segment) === activeSegment;
-    button.textContent = on ? '結束預覽' : '預覽定位';
-    button.classList.toggle('on', on);
-  });
-}
-
-function complicationOverlayControls(comp, segment, playLabel, shared) {
-  const layout = complicationOverlay(comp);
-  const box = document.createElement('div');
-  box.className = 'overlay-controls';
-  const isPreviewingThis = () => complicationPreviewing
-    && activeComplication === comp && activeSegment === segment;
-  // 版面是整組共用的，所以投影上只要是同一個突發狀況，改滑桿就要跟著重畫
-  const redrawIfPaused = () => {
-    if (chromaRedraw && !chromaFrame && activeComplication === comp) chromaRedraw();
-  };
-  const applyChange = () => {
-    applyComplicationOverlayLayout();
-    redrawIfPaused();   // 暫停的畫面沒有 rAF 在跑，要自己重畫一幀
-    syncComplicationOverlayBoxes(comp);
-    updatePreviewLayout();
-    persistLayerLayout('greenscreen', comp);
-  };
-
-  const sliders = overlaySliderRows(layout, COMP_OVERLAY_SLIDERS, `${comp}綠幕`, applyChange);
-  box.appendChild(sliders.node);
-  complicationOverlayBoxes.push({ comp, sync: sliders.sync });
-
-  const preview = Object.assign(document.createElement('button'),
-    { className: 'reset preview', type: 'button', textContent: '預覽定位' });
-  preview.dataset.comp = comp;
-  preview.dataset.segment = segment;
-  preview.addEventListener('click', () => {
-    if (isPreviewingThis()) stopComplicationProjection();
-    else startComplicationProjection(comp, segment, 'preview');
-  });
-
-  const reset = Object.assign(document.createElement('button'),
-    { className: 'reset', type: 'button', textContent: '重設版面' });
-  reset.addEventListener('click', () => {
-    Object.assign(layout, COMP_OVERLAY_DEFAULTS);
-    applyChange();
-  });
-
-  const hint = `預覽定位＝疊上投影停在第一格；「${playLabel}」演完停在最後一格，按停止才收掉。`
-    + layoutHint();
-  box.appendChild(overlayFoot(hint, reset, preview));
-  return box;
-}
-
-// 一張角色卡；emptyText 是查無素材時要說的話
 
 // ---------- 流程 UI ----------
 
@@ -2991,157 +2424,10 @@ function renderFlow() {
   else stopBrowseAutoplay();
 }
 
-function buildCard({ role, label, result, emptyText, extras, silentVoice }) {
-  const card = document.createElement('div');
-  card.className = 'card' + (result ? '' : ' empty');
-
-  const head = document.createElement('div');
-  head.className = 'role';
-  head.innerHTML = `<strong>${label}</strong>${role}`;
-  card.appendChild(head);
-
-  const body = document.createElement('div');
-  if (result) {
-    const desc = document.createElement('p');
-    desc.className = 'desc';
-    desc.textContent = result.asset.description || '(無說明)';
-    if (result.hit) {
-      const b = document.createElement('span');
-      b.className = 'badge hit';
-      b.textContent = '命中突發狀況';
-      desc.appendChild(b);
-    }
-    const pool = document.createElement('span');
-    pool.className = 'badge' + (result.poolSize === 1 ? ' only' : '');
-    pool.textContent = result.poolSize === 1
-      ? '此條件僅 1 筆素材，重新產生不會變'
-      : `${result.poolSize} 筆可選`;
-    desc.appendChild(pool);
-    body.appendChild(desc);
-    if (result.asset.line) {
-      const line = document.createElement('blockquote');
-      line.className = 'line';
-      line.textContent = '「' + result.asset.line + '」';
-      body.appendChild(line);
-    }
-    if (result.asset.tts) body.appendChild(ttsBlock(result.asset.tts));
-    // 這一段的綠幕素材是影片時就用影片自己的原聲，配音檔不放播放器，免得兩個聲音疊在一起
-    if (silentVoice && result.asset.type !== 'none') {
-      const note = document.createElement('div');
-      note.className = 'none-note';
-      note.textContent = '這一段用綠幕影片的原聲，這個配音檔不會播放';
-      body.appendChild(note);
-    } else {
-      body.appendChild(mediaFor(result.asset));
-    }
-    if (role === 'patient_photo' && hasProjectablePatientPhoto(result.asset)) {
-      body.appendChild(patientOverlayControls());
-    }
-    const extraNode = extras && extras(result.asset);
-    if (extraNode) body.appendChild(extraNode);
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    const paths = assetFiles(result.asset).map(file => assetPath(result.asset, file));
-    meta.textContent = `${result.asset.id} · ${paths.join(', ') || '（無檔案）'}`;
-    body.appendChild(meta);
-  } else {
-    const desc = document.createElement('p');
-    desc.className = 'desc';
-    // 這一段本來就吃影片原聲，沒有另外的配音不是資料缺口，不要報成查無素材
-    desc.textContent = silentVoice ? '這一段用綠幕影片的原聲，沒有另外的配音' : emptyText;
-    body.appendChild(desc);
-  }
-  card.appendChild(body);
-  return card;
-}
-
-// 播放／停止一段演出：綠幕素材與台詞一起，投影上同時去背疊上該段的人物
-function segmentActions(comp, segment, playLabel) {
-  const actions = document.createElement('div');
-  actions.className = 'comp-group-actions';
-  const play = Object.assign(document.createElement('button'), { className: 'play', textContent: playLabel });
-  play.dataset.comp = comp;
-  play.dataset.segment = segment;
-  const stop = Object.assign(document.createElement('button'), { className: 'stop', textContent: '停止' });
-  // 按鈕與流程推進走的是同一個函式，不是另寫一份——複製一份播放邏輯遲早會長不一樣。
-  // 登記進 segmentPlayers 的動作已經移到 pickAssets()，不再依賴這些按鈕存在。
-  play.addEventListener('click', () => playSegmentMedia(comp, segment));
-  stop.addEventListener('click', () => {
-    stopSegmentMedia(key => key === segmentKey(comp, segment));
-    if (activeComplication === comp && activeSegment === segment) stopComplicationProjection();
-  });
-  actions.append(play, stop);
-  return actions;
-}
-
-// 一個突發狀況＝一組。組內可再拆成好幾個片段，教官依現場節奏逐段觸發。
-// 只有一段時不加片段標題，維持單純的「一組兩張卡」版面。
-function buildComplicationGroup(comp, seq, segments) {
-  const section = document.createElement('section');
-  section.className = 'comp-group';
-  const single = segments.length === 1;
-
-  const head = document.createElement('div');
-  head.className = 'comp-group-head';
-  const title = document.createElement('h2');
-  title.className = 'comp-group-title';
-  title.innerHTML = `<span class="seq">${seq}</span>`;
-  title.append(document.createTextNode(comp));
-  if (!single) {
-    const count = document.createElement('span');
-    count.className = 'badge';
-    count.textContent = `${segments.length} 個片段`;
-    title.appendChild(count);
-  }
-  head.appendChild(title);
-
-  const stopAllInGroup = Object.assign(document.createElement('button'),
-    { className: 'stop', textContent: '停止' });
-  stopAllInGroup.addEventListener('click', () => {
-    stopSegmentMedia(key => compOfKey(key) === comp);
-    if (activeComplication === comp) stopComplicationProjection();
-  });
-
-  if (single) {
-    head.appendChild(segmentActions(comp, segments[0].segment, '播放這組'));
-  } else {
-    const actions = document.createElement('div');
-    actions.className = 'comp-group-actions';
-    actions.appendChild(stopAllInGroup);
-    head.appendChild(actions);
-  }
-  section.appendChild(head);
-
-  for (const { segment, nodes } of segments) {
-    const cards = document.createElement('div');
-    cards.className = 'cards';
-    nodes.forEach(node => cards.appendChild(node));
-    if (single) {
-      section.appendChild(cards);
-      continue;
-    }
-    const block = document.createElement('div');
-    block.className = 'comp-segment';
-    const bar = document.createElement('div');
-    bar.className = 'comp-segment-head';
-    const label = document.createElement('h3');
-    label.className = 'comp-segment-title';
-    label.textContent = `片段 ${segment}`;
-    bar.append(label, segmentActions(comp, segment, '播放這段'));
-    block.append(bar, cards);
-    section.appendChild(block);
-  }
-  return section;
-}
-
-// **決定這次每個角色用哪一筆素材。** 結果填進 currentEnvironmentAsset／
-// currentPatientPhotoAsset／complicationVideoAssets、媒體池與 segmentPlayers——
-// 預覽、投影、圖層編輯器與流程全都讀這些。卡片只是其中一個消費者，不是主人，
-// 所以畫卡片那一半（renderLegacyCards）可以整個拿掉，這一半必須留著。
 function pickAssets() {
   const env = currentEnv();
   const med = currentMed();
-  // 勾哪些突發狀況由 slides 推導，與 applyScenarioSelection 寫進勾選框的是同一份來源
+  // 勾哪些突發狀況由 slides 推導，不讀情境上的欄位——那個欄位刻意不存在
   const comps = currentScenario ? Scenarios.complicationsOf(currentScenario) : [];
   lastPickedComps = complicationsKey(currentScenario);
 
@@ -3201,62 +2487,6 @@ function pickAssets() {
   return { env, med, comps, base, groups };
 }
 
-// 舊入口的卡片。**純顯示**——播放在 pickAssets() 就已經接到媒體池上了，
-// 這裡畫出來的播放器只是給教官點著試聽。整個函式與 #cards／#comp-groups 一起待刪。
-function renderLegacyCards({ env, med, comps, base, groups }) {
-  const cards = $('cards');
-  const groupsEl = $('comp-groups');
-  cards.innerHTML = '';
-  groupsEl.innerHTML = '';
-  complicationOverlayBoxes.length = 0;
-  patientOverlayBoxes.length = 0;
-
-  base.forEach(({ role, label, result }) => {
-    cards.appendChild(buildCard({
-      role, label, result,
-      emptyText: '此條件下查無符合的素材，可在 scenario-data.yaml 補一筆通用素材',
-    }));
-  });
-
-  groups.forEach(({ comp, segmentNumbers, segments }, index) => {
-    const playLabel = segmentNumbers.length === 1 ? '播放這組' : '播放這段';
-    const built = segments.map(({ segment, roles }) => ({
-      segment,
-      nodes: roles.map(({ role, label, result }) => {
-        const greenScreen = complicationVideoAssets[segmentKey(comp, segment)];
-        return buildCard({
-          role, label, result,
-          silentVoice: role === 'complication_voice'
-            && !!greenScreen && mediaKind(greenScreen) === 'video',
-          // 突發狀況素材有綁環境／事件，所以空卡片多半是「這一組不適合這個情境」而不是缺素材
-          emptyText: (segmentNumbers.length === 1 ? `「${comp}」` : `「${comp}」片段 ${segment} `)
-            + `在「${env}／${med}」沒有素材：可能是這一組不適合這個情境，`
-            + '也可能是還沒做，要放寬就改 scenario-data.yaml 的 environment／medicalEvent',
-          extras: role === 'complication_video'
-            ? asset => (hasProjectableComplication(asset)
-              ? complicationOverlayControls(comp, segment, playLabel, segmentNumbers.length > 1) : null)
-            : null,
-        });
-      }),
-    }));
-    groupsEl.appendChild(buildComplicationGroup(comp, index + 1, built));
-  });
-
-  if (!comps.length) {
-    const note = document.createElement('p');
-    note.className = 'group-note';
-    note.textContent = '未勾選突發狀況，本次沒有突發狀況群組。';
-    groupsEl.appendChild(note);
-  }
-
-  $('btn-gen').textContent = '重新產生';
-  updateSegmentButtons();
-}
-
-function generate() {
-  renderLegacyCards(pickAssets());
-}
-
 function stopMediaIn(root) {
   root.querySelectorAll('audio, video').forEach(el => { el.pause(); el.currentTime = 0; });
 }
@@ -3313,12 +2543,6 @@ function handleFlowKey(e) {
 
 document.addEventListener('keydown', handleFlowKey);
 
-$('btn-gen').addEventListener('click', generate);
-// 手動改選單＝離開情境：流程會指向已經不存在的素材，留著比清掉更危險
-// 順序有意義：先更新可用性（可能取消掉已不可用的勾選），再同步亮起狀態
-const onConditionChange = () => { refreshComplicationAvailability(); syncScenarioActive(); leaveScenario(); };
-$('sel-env').addEventListener('change', onConditionChange);
-$('sel-med').addEventListener('change', onConditionChange);
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', playScene);
 $('btn-stop').addEventListener('click', stopAll);
