@@ -2491,7 +2491,12 @@ function stopMediaIn(root) {
   root.querySelectorAll('audio, video').forEach(el => { el.pause(); el.currentTime = 0; });
 }
 
-// 場景底層（環境＋病患）一起播；突發狀況各組自己按，避免多個突發狀況同時炸開
+// **這兩顆管的是整場，不是某一頁。** 分工：
+//   播放場景 → 開場一次，把環境聲音與病患聲音這層底噪鋪起來
+//   流程翻頁 → 每頁觸發該頁的那一段演出（runStep），底噪不動
+//   全部停止 → 收掉全部，含底噪與投影
+// runStep 刻意不碰底噪，所以「播放場景」不是舊入口的殘留，而是**唯一**會讓環境聲音
+// 響起來的地方——拿掉它整場訓練就沒有環境音了。
 function playScene() {
   poolBase.forEach(el => { el.currentTime = 0; el.play().catch(() => {}); });
   playProjection();
