@@ -58,9 +58,9 @@
   .inline-title { margin-top: 4px; }
   .inline-title-view {
     font-size: 17px; font-weight: 600; color: var(--text);
-    padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; cursor: text;
+    padding: 6px 8px; border-radius: 8px; border: 1px solid transparent;
+    cursor: inherit;              /* 不要 I 型游標——它不是輸入框，是一段標題 */
   }
-  .inline-title-view:hover { border-color: var(--line); background: var(--panel-2); }
   .inline-title-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .inline-title-edit {
     width: 100%; padding: 6px 8px; font: inherit; font-size: 17px; font-weight: 600;
@@ -77,7 +77,16 @@
   }
   .edit-aside { position: sticky; top: 16px; }
   .edit-sticky { display: flex; flex-direction: column; gap: 8px; }
-  .edit-sticky .note-field { margin-top: 2px; }
+  .note-field { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .note-label { font-size: 12px; color: var(--muted); letter-spacing: .5px; }
+  .note-field textarea {
+    width: 100%; box-sizing: border-box; resize: vertical; min-height: 84px;
+    padding: 10px 12px; font: inherit; font-size: 14px; line-height: 1.6;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  .note-field textarea:focus { outline: none; border-color: var(--accent); }
+  .note-field textarea::placeholder { color: var(--muted); }
   /* 預覽最高不超過視窗，否則頁一多右欄自己就先捲掉了 */
   .edit-sticky .preview { max-height: calc(100vh - 90px); }
   /* 窄畫面疊成一欄，預覽回到最上面並維持 sticky */
@@ -883,6 +892,9 @@ function renderProjectionText(slide) {
 function gotoFlow(index) {
   if (!flowSteps.length) return;
   flowIndex = Math.max(0, Math.min(index, flowSteps.length - 1));
+  // 編輯時「展開的頁」與「目前的頁」必須是同一頁：預覽畫的是展開的那一頁，
+  // 而方向鍵動的是目前這一頁，不同步的話換頁後預覽不會動。
+  if (panelLevel === 'edit') editingSlideId = flowSteps[flowIndex].id;
   runStep(flowSteps[flowIndex]);
   renderFlow();
 }
@@ -2027,9 +2039,6 @@ function buildFlowPanel(doc, preview) {
   );
   left.appendChild(bar);
 
-  left.appendChild(Object.assign(doc.createElement('div'),
-    { className: 'panel-section-title', textContent: '頁' }));
-
   const list = doc.createElement('div');
   list.className = 'flow-list edit-pages';
   // flowSteps 現在就是「會播的頁」本身，欄位是 id 不是 slideId
@@ -2183,13 +2192,8 @@ function buildFlowPanel(doc, preview) {
   const stick = doc.createElement('div');
   stick.className = 'edit-sticky';
   if (preview) stick.appendChild(preview);
-  const now = doc.createElement('p');
-  now.className = 'flow-now';
-  now.textContent = flowIndex < 0
-    ? '按「開始」或方向鍵 → 進入第一步'
-    : stepLabel(flowSteps[flowIndex], false);
-  stick.appendChild(now);
-  // 提詞跟著「目前這一頁」走，不是跟著展開的那一頁——教官看的是正在播的畫面
+  // 「只有場景／字幕…」那行拿掉：左欄每一列的 meta 已經寫著同樣的事，
+  // 而右欄的空間應該留給預覽本身與備註。
   const noteSlide = (flowIndex >= 0 && flowSteps[flowIndex]) || editingSlide();
   if (noteSlide) stick.appendChild(buildNoteField(doc, noteSlide));
   right.appendChild(stick);
@@ -2250,22 +2254,28 @@ function inlineTitle(doc, { value, onCommit, hint = '雙擊（或按 Enter）改
   return box;
 }
 
-// 給教官的提詞。**不會投影出去**——要投影給學員看的字請加 text 圖層。
-// 放在預覽底下而不是圖層清單裡：它講的是「看著這個畫面要說什麼」，
-// 跟右邊那張圖是同一件事，跟圖層怎麼疊沒有關係。
+// 給教官的備註。**不會投影出去**——要投影給學員看的字請加說明文字圖層。
+// 放在預覽底下：它講的是「看著這個畫面要說什麼」，跟右邊那張圖是同一件事。
+// 用 textarea 不用 input：備註常常是一整段流程說明，單行框會讓人只敢寫短句。
 function buildNoteField(doc, slide) {
-  const row = doc.createElement('label');
-  row.className = 'edit-field note-field';
-  row.append(Object.assign(doc.createElement('span'), { textContent: '提詞' }));
-  const input = Object.assign(doc.createElement('input'),
-    { type: 'text', placeholder: '只有教官看得到，不會投影', value: slide.note || '' });
-  input.addEventListener('change', () => {
-    const v = input.value.trim();
+  const box = doc.createElement('div');
+  box.className = 'note-field';
+  const label = doc.createElement('label');
+  label.className = 'note-label';
+  label.textContent = '備註';
+  label.htmlFor = 'slide-note';
+  const area = Object.assign(doc.createElement('textarea'), {
+    id: 'slide-note', rows: 4,
+    placeholder: '只有教官看得到，不會投影出去',
+    value: slide.note || '',
+  });
+  area.addEventListener('change', () => {
+    const v = area.value.trim();
     if (v) slide.note = v; else delete slide.note;
     persistScenarioEdit();
   });
-  row.appendChild(input);
-  return row;
+  box.append(label, area);
+  return box;
 }
 
 // 展開在頁清單裡的那一頁的內容。標題不在這裡——它就是上面那一列的列名，
@@ -2276,7 +2286,7 @@ function buildSlideBody(doc, slide) {
   if (!slide) return wrap;
 
   const LAYER_LABEL = {
-    scene: '場景', patient: '病患照片', greenscreen: '去背人物', text: '說明文字',
+    scene: '場景', patient: '病患照片', greenscreen: '突發狀況', text: '說明文字',
   };
 
   // 由上往下顯示＝畫面上由前往後，跟一般繪圖軟體的圖層面板一致
