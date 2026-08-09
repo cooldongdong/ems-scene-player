@@ -1,0 +1,292 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>素材庫 — 消防員場 事件腳本產生器</title>
+<style>
+  :root {
+    --bg: #101012; --panel: #17171a; --panel-2: #1e1e22; --line: #2c2c31;
+    --text: #ececef; --muted: #9a9aa4; --accent: #ff6b3d; --accent-dim: rgba(255,107,61,.16);
+    --ok: #6bd08a; --warn: #ffb27a; --none: #6a6a74;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 24px 64px; background: var(--bg); color: var(--text);
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  header { padding: 28px 0 8px; }
+  h1 { margin: 0 0 6px; font-size: 24px; }
+  h2 { margin: 40px 0 6px; font-size: 19px; }
+  .lede { margin: 0; color: var(--muted); font-size: 14px; }
+  a { color: var(--accent); }
+  .back { display: inline-block; margin-top: 14px; font-size: 14px; }
+
+  /* ---------- 覆蓋表 ----------
+     這一頁的重點是「補素材的人知道要補什麼」，所以缺口要比齊全更顯眼。 */
+  .matrix-wrap { overflow-x: auto; margin-top: 14px; }
+  table { border-collapse: collapse; font-size: 13px; min-width: 760px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  thead th { background: var(--panel-2); font-weight: 600; white-space: nowrap; }
+  tbody th { background: var(--panel-2); font-weight: 600; white-space: nowrap; }
+  td.cell { cursor: pointer; }
+  td.cell:hover { background: var(--accent-dim); }
+  td.full { background: rgba(107,208,138,.09); }
+  td.gap { background: rgba(255,178,122,.09); }
+  .roles { display: flex; gap: 5px; margin-bottom: 3px; }
+  .dot {
+    width: 15px; height: 15px; border-radius: 4px; font-size: 10px; line-height: 15px;
+    text-align: center; font-weight: 700; color: #101012;
+  }
+  .dot.ok { background: var(--ok); }
+  .dot.missing { background: var(--warn); }
+  /* type: none 是資料作者刻意留白，不是漏洞，所以不能跟「查無」同色 */
+  .dot.none { background: var(--none); }
+  .cell-note { font-size: 11px; color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+  .summary { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .stat {
+    padding: 10px 14px; border-radius: 10px; background: var(--panel);
+    border: 1px solid var(--line); font-size: 13px;
+  }
+  .stat b { display: block; font-size: 20px; font-weight: 700; }
+  .stat.warn b { color: var(--warn); }
+
+  /* ---------- 素材清單 ---------- */
+  .role-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .role-head .count { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); margin-top: 12px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .card.is-none { border-style: dashed; }
+  .card-id { font: 600 13px/1.3 ui-monospace, monospace; color: var(--accent); }
+  .card-desc { font-size: 14px; }
+  .card-file { font: 11px/1.5 ui-monospace, monospace; color: var(--muted); word-break: break-all; }
+  .card img, .card video {
+    width: 100%; max-height: 180px; object-fit: contain; border-radius: 8px;
+    background: #0a0a0c; display: block;
+  }
+  .card audio { width: 100%; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+  }
+  .tag.any { opacity: .6; font-style: italic; }
+  .tag.env { border-color: #3b5c7a; color: #9dc6ea; }
+  .tag.med { border-color: #6a4a7a; color: #d0a8e6; }
+  .tag.comp { border-color: #7a5230; color: var(--warn); }
+  .line { font-size: 13px; padding: 7px 10px; border-left: 3px solid var(--accent); background: var(--panel-2); }
+  .none-note { font-size: 12px; color: var(--muted); }
+  .missing-file { font-size: 12px; color: var(--warn); }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>素材庫</h1>
+  <p class="lede">這一頁是給補素材的人看的：哪些格子是空的、還缺什麼。教官跑訓練不需要開這一頁。</p>
+  <a class="back" href="index.html">← 回到情境產生器</a>
+</header>
+
+<h2>覆蓋表</h2>
+<p class="lede">環境 × 急救事件，共 30 格。點任一格會回到產生器並套用那個組合。</p>
+<div class="summary" id="summary"></div>
+<div class="matrix-wrap"><table id="matrix"></table></div>
+<div class="legend">
+  <span><i class="dot ok">✓</i> 有素材</span>
+  <span><i class="dot none">—</i> 刻意留白（<code>type: none</code>，不算缺）</span>
+  <span><i class="dot missing">!</i> 查無素材</span>
+  <span>方塊順序：環境影像・環境聲音・病患照片・病患聲音</span>
+</div>
+
+<div id="roles"></div>
+<p class="lede" id="status">載入中…</p>
+</div>
+
+<script src="vendor/js-yaml.min.js"></script>
+<script src="js/scenarios.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const ROLE_LABEL = {
+  environment_video: '環境影像', ambient_sound: '環境聲音',
+  patient_photo: '病患照片', patient_voice: '病患聲音',
+  complication_video: '突發狀況綠幕影片', complication_voice: '突發狀況聲音',
+};
+const TAG_LABEL = { environment: '環境', medicalEvent: '急救事件', complication: '突發狀況', gender: '性別', ageGroup: '年齡層' };
+const TAG_CLASS = { environment: 'env', medicalEvent: 'med', complication: 'comp' };
+
+const el = (tag, props = {}, ...kids) => {
+  const node = Object.assign(document.createElement(tag), props);
+  kids.filter(k => k != null).forEach(k => node.append(k));
+  return node;
+};
+
+function assetFiles(asset) {
+  const f = asset.file;
+  return (Array.isArray(f) ? f : [f]).filter(x => typeof x === 'string' && x);
+}
+function assetPath(asset, file) {
+  if (/^https?:\/\//.test(file)) return file;
+  return file.includes('/') ? file : `assets/${asset.role}/${file}`;
+}
+function mediaKind(file) {
+  if (/\.(mp4|webm|mov|m4v|ogv)$/i.test(file)) return 'video';
+  if (/\.(jpg|jpeg|png|gif|webp|svg|avif)$/i.test(file)) return 'image';
+  return 'audio';
+}
+
+// ---------- 覆蓋表 ----------
+
+function dot(state) {
+  const mark = state === 'ok' ? '✓' : state === 'none' ? '—' : '!';
+  return el('i', { className: `dot ${state}`, textContent: mark });
+}
+
+function buildMatrix(DATA) {
+  const rows = Scenarios.coverageMatrix(DATA.assets, DATA.options);
+  const sets = Scenarios.optionSets(DATA.options);
+  const table = $('matrix');
+  table.replaceChildren();
+
+  const head = el('tr', {}, el('th', { textContent: '環境 ＼ 急救事件' }));
+  sets.medicalEvents.forEach(m => head.append(el('th', { textContent: m })));
+  table.append(el('thead', {}, head));
+
+  const body = el('tbody');
+  for (const env of sets.environments) {
+    const tr = el('tr', {}, el('th', { textContent: env }));
+    for (const med of sets.medicalEvents) {
+      const row = rows.find(r => r.environment === env && r.medicalEvent === med);
+      const td = el('td', { className: 'cell ' + (row.missing.length ? 'gap' : 'full') });
+      td.title = (row.missing.length
+        ? '缺：' + row.missing.map(r => ROLE_LABEL[r]).join('、')
+        : '四項基本素材齊全')
+        + `\n可用的突發狀況：${row.complications.length ? row.complications.join('、') : '無'}`
+        + '\n\n點一下回到產生器並套用這個組合';
+      const roles = el('div', { className: 'roles' });
+      Scenarios.BASE_ROLES.forEach(r => roles.append(dot(row.base[r])));
+      td.append(roles, el('div', {
+        className: 'cell-note',
+        textContent: `突發狀況 ${row.complications.length}`,
+      }));
+      td.addEventListener('click', () => {
+        location.href = `index.html?env=${encodeURIComponent(env)}&med=${encodeURIComponent(med)}`;
+      });
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+  table.append(body);
+
+  // 摘要：先講缺口，再講齊全——這一頁的用途是找出要補什麼
+  const full = rows.filter(r => !r.missing.length).length;
+  const noComp = rows.filter(r => !r.complications.length).length;
+  const perRole = {};
+  Scenarios.BASE_ROLES.forEach(r => {
+    perRole[r] = rows.filter(row => row.base[r] === 'missing').length;
+  });
+  const worst = Object.entries(perRole).sort((a, b) => b[1] - a[1])[0];
+  const usableCombos = rows.reduce((n, r) => n + r.complications.length, 0);
+  const totalCombos = rows.length * Scenarios.optionSets(DATA.options).complications.length;
+
+  $('summary').replaceChildren(
+    el('div', { className: 'stat' }, el('b', { textContent: `${full} / ${rows.length}` }), '四項基本素材齊全'),
+    el('div', { className: 'stat warn' },
+      el('b', { textContent: String(perRole[worst[0]]) }), `格缺${ROLE_LABEL[worst[0]]}（最大缺口）`),
+    el('div', { className: 'stat warn' },
+      el('b', { textContent: `${usableCombos} / ${totalCombos}` }), '種突發狀況勾選真的會出現東西'),
+    el('div', { className: noComp ? 'stat warn' : 'stat' },
+      el('b', { textContent: String(noComp) }), '格一個突發狀況都沒有'),
+  );
+}
+
+// ---------- 素材清單 ----------
+
+function tagChips(asset) {
+  const wrap = el('div', { className: 'tags' });
+  for (const [key, label] of Object.entries(TAG_LABEL)) {
+    const values = (asset.tags || {})[key] || [];
+    if (!values.length) {
+      // 留空＝不限，而且是刻意的（YAML 註解：不確定就留空，別亂填來搶排序）
+      if (TAG_CLASS[key]) wrap.append(el('span', { className: 'tag any', textContent: `${label}：不限` }));
+      continue;
+    }
+    values.forEach(v => wrap.append(el('span', {
+      className: 'tag ' + (TAG_CLASS[key] || ''), textContent: `${label}：${v}`,
+    })));
+  }
+  return wrap;
+}
+
+function preview(asset) {
+  const files = assetFiles(asset);
+  if (!files.length) return null;
+  const box = el('div');
+  files.forEach(file => {
+    const src = assetPath(asset, file);
+    const kind = mediaKind(file);
+    if (kind === 'image') {
+      const img = el('img', { src, alt: asset.description || asset.id, loading: 'lazy' });
+      img.addEventListener('error', () => {
+        img.replaceWith(el('p', { className: 'missing-file', textContent: '⚠ 檔案載不到：' + src }));
+      });
+      box.append(img);
+    } else if (kind === 'video') {
+      box.append(el('video', { src, controls: true, preload: 'metadata' }));
+    } else {
+      box.append(el('audio', { src, controls: true, preload: 'none' }));
+    }
+  });
+  return box;
+}
+
+function buildRoles(DATA) {
+  const host = $('roles');
+  host.replaceChildren();
+  const byRole = {};
+  DATA.assets.forEach(a => (byRole[a.role] = byRole[a.role] || []).push(a));
+
+  for (const [role, label] of Object.entries(ROLE_LABEL)) {
+    const list = byRole[role] || [];
+    host.append(el('h2', { className: 'role-head' },
+      label,
+      el('span', { className: 'count', textContent: `${list.length} 筆　${role}` })));
+    const cards = el('div', { className: 'cards' });
+    list.forEach(asset => {
+      const card = el('div', { className: 'card' + (asset.type === 'none' ? ' is-none' : '') });
+      card.append(el('div', { className: 'card-id', textContent: asset.id + (asset.segment ? `　片段 ${asset.segment}` : '') }));
+      if (asset.description) card.append(el('div', { className: 'card-desc', textContent: asset.description }));
+      if (asset.type === 'none') {
+        card.append(el('div', { className: 'none-note', textContent: '此情境刻意沒有這個素材（type: none）——不算缺口' }));
+      } else {
+        const p = preview(asset);
+        if (p) card.append(p);
+        assetFiles(asset).forEach(f => card.append(el('div', { className: 'card-file', textContent: assetPath(asset, f) })));
+      }
+      if (asset.line) card.append(el('div', { className: 'line', textContent: `「${asset.line}」` }));
+      card.append(tagChips(asset));
+      cards.append(card);
+    });
+    host.append(cards);
+  }
+}
+
+(async () => {
+  try {
+    const res = await fetch('scenario-data.yaml', { cache: 'no-cache' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const DATA = jsyaml.load(await res.text());
+    if (typeof Scenarios === 'undefined' || typeof Scenarios.coverageMatrix !== 'function') {
+      throw new Error('js/scenarios.js 是舊版或未載入，請強制重新整理（⌘+Shift+R）');
+    }
+    buildMatrix(DATA);
+    buildRoles(DATA);
+    $('status').textContent = `素材庫共 ${DATA.assets.length} 筆。`;
+  } catch (err) {
+    $('status').textContent = '載入失敗：' + err.message;
+  }
+})();
+</script>
