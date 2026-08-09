@@ -87,21 +87,32 @@
       flex: 1; min-height: 0; overflow-y: auto;
       padding-right: 4px;          /* 捲軸不要壓在列的右邊界上 */
       scrollbar-gutter: stable;
+      /* **這一行不能省。** .flow-list 是 grid，而 grid 的 align-content 預設是
+         stretch：它本來高度隨內容走、沒有多餘空間所以看不出來；一旦變成固定高度
+         的捲動容器，頁不夠多時剩下的空白就會被平均塞進每一列之間，看起來像
+         「間距整個變大了」。列距要由 gap 決定，不是由「還剩多少空間」決定。 */
+      align-content: start;
     }
 
     /* 右欄：整個畫面都不動了，sticky 沒有意義也沒有作用（它需要一個會捲的祖先）。
        視窗變矮時讓步的是預覽——備註與翻頁列是固定高度的，而且都是不能被切掉的東西。 */
     body.editing .edit-aside { position: static; display: flex; min-height: 0; }
-    body.editing .edit-sticky { flex: 1; min-height: 0; }
+    body.editing .edit-sticky { flex: 1; min-height: 0; container-type: size; }
+    /* 預覽**不吃剩餘空間**（flex: 0 1 auto）：它是 16:9 的，長不高就是長不高，
+       讓它 flex:1 只會把多出來的高度變成舞台上下兩塊空白，並把備註推到最底下。
+       剩餘空間留在整欄最後，跟改版前一樣；列距一律交給 .edit-sticky 的 gap。 */
     body.editing .edit-sticky .preview {
-      flex: 1; min-height: 0; max-height: none; margin-bottom: 8px;
-      display: grid; place-items: center; container-type: size;
+      flex: 0 1 auto; min-height: 0; max-height: none; margin-bottom: 0;
     }
     /* 舞台**必須維持 16:9**：圖層的 x/y 是百分比，框一被壓扁，預覽的位置就
        對不上投影。所以不用 max-height 夾（那會拉伸），而是直接算出
-       「塞得進這個框的 16:9 寬度」——高不夠就用高換算，寬不夠就用寬。 */
+       「塞得進這個框的 16:9 寬度」——高不夠就用高換算，寬不夠就用寬。
+       --preview-reserve 是同欄其他東西（翻頁列、備註、gap）實際佔掉的高度，
+       由 updatePreviewFit() 量出來寫進來。寫死一個數字遲早跟備註欄對不上，
+       而低估的方向會把備註擠出畫面——整頁不捲，擠出去就是永遠看不到。 */
     body.editing .edit-sticky .preview-stage {
-      width: min(100cqw, calc(100cqh * 16 / 9)); height: auto;
+      width: min(100cqw, calc((100cqh - var(--preview-reserve, 200px)) * 16 / 9));
+      height: auto;
     }
   }
 
@@ -173,9 +184,12 @@
 
   /* 一頁 = 一列標頭 ＋（展開時）它的內容。只有目前這一頁是展開的。 */
   .flow-item { border-radius: 10px; }
+  /* 列距一律由 .flow-list 的 gap 決定。展開的卡片曾經另外帶 margin: 6px 0，
+     結果是「相鄰間距」變成兩種（6px 或 12px，看鄰居展開了沒），而界線兩側
+     剛好各站一種時就會歪得最明顯。卡片要被看出來靠的是外框與底色，不是外距。 */
   .flow-item.expanded {
     background: var(--panel-2); border: 1px solid var(--line);
-    border-radius: 10px; margin: 6px 0; overflow: hidden;
+    border-radius: 10px; overflow: hidden;
   }
   /* 展開時外框由外層畫，列自己不再畫——否則列的方角會戳出外層的圓角 */
   .flow-item.expanded:has(> .flow-row.current) { border-color: var(--accent); }
@@ -358,9 +372,6 @@
      上下間距會變成兩種——上面是 ::after 的 margin 8px，下面是 grid gap 6px。
      當成格子畫就兩邊都吃 gap，永遠對稱，也永遠不會被誰蓋住。 */
   .flow-divider { height: 1px; background: var(--line); }
-  /* 展開的 .flow-item 會多帶 6px 上下外距（讓開著的那張卡透氣），但設定列底下
-     緊接著界線，多出來的 6px 只會讓界線看起來偏下——所以這一側交還給 gap。 */
-  .settings-item.expanded { margin-bottom: 0; }
   .edit-action {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
     padding: 9px 11px; border-radius: 8px;
@@ -2750,7 +2761,23 @@ function previewLayoutOf(slide, type) {
   return green ? complicationOverlay(green.complication) : null;
 }
 
+// 編輯畫面的右欄高度是固定的（見 body.editing 那組版面），舞台能有多大，取決於
+// 同欄的翻頁列與備註實際佔掉多少。把那個高度量出來交給 CSS，舞台才有辦法在
+// 「維持 16:9」的前提下自己讓步——而 16:9 不能破，圖層的 x/y 是百分比。
+function updatePreviewFit() {
+  const stick = document.querySelector('#flow .edit-sticky');
+  const preview = stick && stick.querySelector('.preview');
+  if (!stick || !preview) return;
+  const gap = parseFloat(getComputedStyle(stick).rowGap) || 0;
+  const reserve = [...stick.children]
+    .filter(el => el !== preview)
+    .reduce((sum, el) => sum + el.getBoundingClientRect().height + gap, 0);
+  stick.style.setProperty('--preview-reserve', reserve + 'px');
+}
+
 function updatePreviewLayout() {
+  // 先定舞台大小再擺圖層：底下的尺寸換算讀的是舞台量出來的寬高，順序反了會慢一拍
+  updatePreviewFit();
   const stage = document.querySelector('#flow .preview-stage');
   if (!stage) return;
   const slide = (panelLevel === 'edit' && editingSlide()) || currentSlide();
@@ -3177,6 +3204,11 @@ document.addEventListener('keydown', handleFlowKey);
 
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', toggleAmbience);
+
+// 預覽裡的尺寸有兩項是「依舞台實際寬高算成 px 存下來的」（圖層的尺寸上限、
+// 舞台自己能有多大），視窗一改就過期。編輯畫面是固定一個視窗高的版面，
+// 改視窗高度卻不重算的話，畫面不會報錯，只會安靜地不合身。
+window.addEventListener('resize', updatePreviewLayout);
 
 window.addEventListener('beforeunload', () => {
   if (projectionWindow && !projectionWindow.closed) projectionWindow.close();
