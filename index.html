@@ -149,6 +149,8 @@
   .flow { margin-top: 0; padding-top: 0; border-top: 0; }
   .flow-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .flow-title { font-size: 16px; font-weight: 700; }
+  .flow-title .inline-title-view { font-size: 16px; font-weight: 700; padding: 4px 8px; }
+  .flow-title .inline-title-edit { font-size: 16px; font-weight: 700; padding: 4px 8px; }
   .flow-counter { font-size: 13px; color: var(--muted); margin-left: auto; }
   .flow-now {
     margin: 10px 0 0; padding: 10px 12px; border-radius: 8px;
@@ -1930,9 +1932,13 @@ function buildFlowPanel(doc) {
   const head = doc.createElement('div');
   head.className = 'flow-head';
   const back = flowButton(doc, '‹ 回到情境', () => { panelLevel = 'browse'; renderFlow(); });
-  const title = doc.createElement('span');
-  title.className = 'flow-title';
-  title.textContent = currentScenario.name;
+  // 情境名稱直接雙擊改，不另外給按鈕——命名是偶爾才做的事，不值得常駐一顆
+  const title = inlineTitle(doc, {
+    value: currentScenario.name,
+    hint: '雙擊（或按 Enter）改情境名稱',
+    className: 'flow-title',
+    onCommit: renameScenario,
+  });
   const counter = doc.createElement('span');
   counter.className = 'flow-counter';
   counter.textContent = flowSteps.length
@@ -2063,10 +2069,6 @@ function buildFlowPanel(doc) {
       b.className = 'flow-actions';
       b.append(
         flowButton(doc, '＋ 新增頁', addSlide),
-        flowButton(doc, '重新命名情境', () => {
-          const name = doc.defaultView.prompt('情境名稱', currentScenario.name);
-          if (name && name.trim()) renameScenario(name.trim());
-        }),
       );
       return b;
     })(),
@@ -2090,21 +2092,21 @@ function buildFlowPanel(doc) {
 // 標題平常就是標題，雙擊才變成輸入框——常駐一個 input 會讓「這是內容」看起來像
 // 「這是表單」。雙擊沒有鍵盤路徑，所以 focus 後按 Enter 也要能進入編輯，
 // 否則這個欄位對只用鍵盤的人等於消失。
-function inlineTitle(doc, slide) {
+function inlineTitle(doc, { value, onCommit, hint = '雙擊（或按 Enter）改名', className = '' }) {
   const box = doc.createElement('div');
-  box.className = 'inline-title';
+  box.className = ('inline-title ' + className).trim();
 
   const view = doc.createElement('div');
   view.className = 'inline-title-view';
   view.tabIndex = 0;
-  view.textContent = slide.title;
-  view.title = '雙擊（或按 Enter）改標題';
+  view.textContent = value;
+  view.title = hint;
 
   const edit = Object.assign(doc.createElement('input'),
-    { type: 'text', className: 'inline-title-edit', value: slide.title, hidden: true });
+    { type: 'text', className: 'inline-title-edit', value, hidden: true });
 
   const open = () => {
-    edit.value = slide.title;
+    edit.value = value;
     edit.hidden = false;
     view.hidden = true;
     edit.focus();
@@ -2113,9 +2115,8 @@ function inlineTitle(doc, slide) {
   const close = commit => {
     if (commit) {
       const next = edit.value.trim();
-      if (next && next !== slide.title) {
-        slide.title = next;
-        persistScenarioEdit();     // 內含重繪，所以下面的還原只在沒有改動時才會被看到
+      if (next && next !== value) {
+        onCommit(next);            // 內含重繪，所以下面的還原只在沒有改動時才會被看到
         return;
       }
     }
@@ -2147,7 +2148,11 @@ function buildSlideEditor(doc) {
   wrap.appendChild(Object.assign(doc.createElement('div'),
     { className: 'panel-section-title', textContent: `編輯：${slide.title}` }));
 
-  wrap.appendChild(inlineTitle(doc, slide));
+  wrap.appendChild(inlineTitle(doc, {
+    value: slide.title,
+    hint: '雙擊（或按 Enter）改這一頁的標題',
+    onCommit: next => { slide.title = next; persistScenarioEdit(); },
+  }));
 
   // 給教官的提詞。**不會投影出去**——要投影給學員看的字請加 text 圖層。
   const noteRow = doc.createElement('label');
@@ -2216,18 +2221,15 @@ function buildSlideEditor(doc) {
 
     const tools = doc.createElement('span');
     tools.className = 'edit-tools';
-    // 有位置的圖層給一顆歸位：病患通常不會動，拖歪了要能一鍵回到預設
-    if (Object.keys(Scenarios.LAYER_DEFAULTS[layer.type] || {}).length) {
-      const home = flowButton(doc, '歸位', () => resetLayerLayout(layer.type, layer.complication));
-      home.title = layer.type === 'patient'
-        ? '回到這個情境的病患預設位置' : '回到預設位置與大小';
-      tools.append(home);
-    }
-    // 病患的預設位置是情境層的，所以要有一個地方把「現在這樣」變成「以後都這樣」
+    // 只有病患有「歸位」與「設為預設」：它整場站同一個地方，所以情境層存得住一個預設。
+    // 去背人物每一段站的位置本來就該各自調（這一段站左邊、下一段走近），
+    // 沒有一個「原本的位置」可以回去——給它一顆歸位只會讓人以為自己弄壞了什麼。
     if (layer.type === 'patient') {
+      const home = flowButton(doc, '歸位', () => resetLayerLayout(layer.type));
+      home.title = '回到這個情境的病患預設位置';
       const asHome = flowButton(doc, '設為預設', setPatientHomeFromCurrent);
       asHome.title = '把目前位置設為此情境的預設，之後新增的頁都從這裡開始';
-      tools.append(asHome);
+      tools.append(home, asHome);
     }
     // 場景與病患是每頁必備、由情境決定的，沒有刪除鍵；
     // 沒有上下鍵則是因為 z 順序由型別決定，投影視窗的 z-index 是寫死的
@@ -2244,7 +2246,7 @@ function buildSlideEditor(doc) {
     // 必備的兩層永遠都在，不必也不能「新增」
     if (Scenarios.ALWAYS_ON_LAYERS.includes(type)) return;
     if (Scenarios.layerOf(slide, type)) return;   // 每種一頁最多一個
-    addBar.append(flowButton(doc, `＋ ${LAYER_LABEL[type]}`, () => addLayer(type)));
+    addBar.append(flowButton(doc, `＋ ${LAYER_LABEL[type] || type}`, () => addLayer(type)));
   });
   if (addBar.children.length) wrap.appendChild(addBar);
 
