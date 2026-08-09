@@ -66,6 +66,12 @@
 
   // ---------- 推導 ----------
 
+  // 圖層看不看得見。散在各處寫 `layer.visible !== false` 遲早有人漏一處，
+  // 而漏掉的那一處通常是投影端——教官藏起來的東西還投在學員面前。
+  function layerVisible(layer) {
+    return !!layer && layer.visible !== false;
+  }
+
   // 取某一頁的某種圖層（每種型別一頁最多一個，見 normalizeSlide）
   function layerOf(slide, type) {
     return asArray(slide && slide.layers).find(l => l.type === type) || null;
@@ -151,6 +157,11 @@
     // 釘選素材：auto（不填）＝依情境條件挑，重新產生會換；填了就永遠是這一筆。
     // id 對不對這裡不檢查——資料層看不到素材庫，交給呼叫端在挑素材時處理。
     if (trimmed(layer.asset)) out.asset = trimmed(layer.asset);
+
+    // 顯示／隱藏。**與「刪除」是兩件事**：刪除是「這頁不要這個東西」，隱藏是
+    // 「這一刻先不要看到」。scene 與 patient 是必備圖層、刪不掉，所以要暫時把病患
+    // 收起來只看場景，只有這條路。預設 true，只有明確寫 false 才算隱藏。
+    if (layer.visible === false) out.visible = false;
 
     const defaults = LAYER_DEFAULTS[type];
     for (const key of Object.keys(defaults)) {
@@ -319,6 +330,7 @@
           if (layer.segment) l.segment = layer.segment;
           if (layer.text) l.text = layer.text;
           if (layer.asset) l.asset = layer.asset;
+          if (layer.visible === false) l.visible = false;   // 預設顯示，只寫隱藏的
           // 只寫跟預設不一樣的版面值，否則每個檔都會被 size/x/y/tolerance 灌滿
           const defaults = LAYER_DEFAULTS[layer.type] || {};
           for (const key of Object.keys(defaults)) {
@@ -582,6 +594,7 @@
     LAYER_DEFAULTS,
     LAYER_RANGES,
     layerOf,
+    layerVisible,
     BASE_ROLES,
     COMPLICATION_ROLES,
     optionSets,

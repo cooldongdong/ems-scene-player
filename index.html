@@ -153,7 +153,7 @@
   .stage-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .stage-bar button { font-size: 14px; padding: 9px 16px; }
   /* 瀏覽模式只需要「開始投影」，播放與停止是編輯時才用得到的 */
-  .stage-bar.browse #btn-play, .stage-bar.browse #btn-stop { display: none; }
+  .stage-bar.browse #btn-play { display: none; }
 
   /* 媒體池：實際發出聲音的地方。推到畫面外而不是 display:none／hidden——
      隱藏的 <video> 在部分瀏覽器不保證會播，而這裡的綠幕影片正是靠原聲發聲。 */
@@ -235,6 +235,19 @@
   button.danger:hover { border-color: #ff8f6b; }
   .flow-actions-tight { margin: -2px 0 4px; padding-left: 12px; }
   .flow-row.dragging { opacity: .4; }
+  /* 拖曳時的插入位置提示：線畫在會插進去的那一側 */
+  .flow-row { position: relative; }
+  .flow-row.drop-before::before, .flow-row.drop-after::after {
+    content: ''; position: absolute; left: 0; right: 0; height: 2px;
+    background: var(--accent); border-radius: 2px;
+  }
+  .flow-row.drop-before::before { top: -1px; }
+  .flow-row.drop-after::after { bottom: -1px; }
+  /* 眼睛：關掉時整列淡掉，一眼看出這層不會出現 */
+  .layer-eye { font-size: 12px; padding: 2px 7px; line-height: 1.5; }
+  .layer-eye.off { opacity: .55; }
+  .edit-action:has(.layer-eye.off) .layer-name,
+  .edit-action:has(.layer-eye.off) .layer-asset { opacity: .45; text-decoration: line-through; }
   /* grab 游標只出現在把手上。整列可拖時游標整條都是 grab，會讓人以為哪裡都能拖 */
   .flow-drag {
     flex: none; color: var(--muted); cursor: grab;
@@ -433,8 +446,7 @@
            節點是搬的不是重建的，所以 id、listener 與既有的啟用／文字邏輯都不受影響。 -->
       <div class="stage-bar" id="stage-bar">
         <button id="btn-project" disabled>開始投影</button>
-        <button id="btn-play" disabled>播放場景</button>
-        <button id="btn-stop" disabled>全部停止</button>
+        <button id="btn-play" disabled>播放環境音</button>
       </div>
     </section>
   </div>
@@ -881,7 +893,7 @@ function renderProjectionText(slide) {
   if (!doc) return;
   const box = doc.getElementById('projection-message');
   const layer = slide && Scenarios.layerOf(slide, 'text');
-  if (!layer) { box.style.display = 'none'; box.textContent = ''; return; }
+  if (!Scenarios.layerVisible(layer)) { box.style.display = 'none'; box.textContent = ''; return; }
   box.textContent = layer.text;
   box.style.display = 'grid';
   box.style.background = 'transparent';
@@ -1373,11 +1385,13 @@ function absoluteAssetUrl(file) {
 // 主控列的兩顆。狀態一律由媒體池決定，不再問畫面上有沒有卡片——
 // 池是在 pickAssets() 裡同步建好的，所以這裡不需要等任何非同步載入。
 function updateStageButtons() {
-  const scene = poolBase.size > 0;
-  const anySegment = poolSegments.size > 0
-    || Object.values(complicationVideoAssets).some(hasProjectableComplication);
-  $('btn-play').disabled = !scene;
-  $('btn-stop').disabled = !scene && !anySegment;
+  const btn = $('btn-play');
+  const has = poolBase.size > 0;
+  btn.disabled = !has;
+  const on = has && ambiencePlaying();
+  btn.textContent = on ? '停止環境音' : '播放環境音';
+  btn.classList.toggle('on', on);
+  btn.title = has ? '' : '這個情境沒有環境聲音素材';
 }
 
 function updateProjectionButton() {
@@ -1596,6 +1610,10 @@ function renderProjectionPatient() {
   const layer = doc.getElementById('projection-patient-layer');
   layer.classList.remove('visible');
   layer.replaceChildren();
+  // **隱藏必須同時作用在預覽與投影。** 只做預覽的話，教官會以為東西藏起來了，
+  // 學員那面大螢幕上它還在——那比沒有這個功能更糟。
+  const patientLayer = Scenarios.layerOf(currentSlide(), 'patient');
+  if (!Scenarios.layerVisible(patientLayer)) return;
   if (!patientOverlay.enabled || !hasProjectablePatientPhoto(currentPatientPhotoAsset)) return;
 
   const file = assetPath(currentPatientPhotoAsset, assetFiles(currentPatientPhotoAsset)[0]);
@@ -1695,6 +1713,8 @@ function hasProjectableComplication(asset) {
 // 疊上去一律先停在第一格；mode 'play' 接著播一次並停在最後一格，'preview' 就停著不動。
 // 兩種都不會自己消失，要收掉請按停止。
 function startComplicationProjection(comp, segment, mode) {
+  // 這一頁把突發狀況藏起來了就不要疊上去——隱藏要對投影一樣有效
+  if (!Scenarios.layerVisible(Scenarios.layerOf(currentSlide(), 'greenscreen'))) return false;
   const asset = complicationVideoAssets[segmentKey(comp, segment)];
   if (!hasProjectableComplication(asset)) return false;
   const doc = projectionDocument();
@@ -1913,6 +1933,7 @@ const poolBase = new Map();      // 基本角色 role -> 媒體元素
 const poolSegments = new Map();  // segmentKey -> 該段要一起播的媒體元素
 
 function resetMediaPool() {
+  ambienceOn = false;      // 池整個換掉，原本在響的底噪也跟著沒了
   stopMediaIn($('media-pool'));
   $('media-pool').innerHTML = '';
   poolBase.clear();
@@ -2147,11 +2168,27 @@ function buildFlowPanel(doc, preview) {
     });
     row.addEventListener('dragend', () => {
       row.classList.remove('dragging');
+      document.querySelectorAll('.drop-before, .drop-after')
+        .forEach(el => el.classList.remove('drop-before', 'drop-after'));
       row.draggable = false;      // 放開後回到「不可拖」，游標才不會整列都是 grab
     });
-    row.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    // 拖到哪裡要看得見：在會插入的那一側畫一條線，否則放手前完全是猜的
+    const markEdge = e => {
+      const rect = row.getBoundingClientRect();
+      const after = (e.clientY - rect.top) > rect.height / 2;
+      row.classList.toggle('drop-after', after);
+      row.classList.toggle('drop-before', !after);
+    };
+    const clearEdge = () => row.classList.remove('drop-before', 'drop-after');
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      markEdge(e);
+    });
+    row.addEventListener('dragleave', clearEdge);
     row.addEventListener('drop', e => {
       e.preventDefault();
+      clearEdge();
       const draggedId = e.dataTransfer.getData('text/plain');
       if (!draggedId || draggedId === slide.id) return;
       const target = currentScenario.slides.findIndex(s => s.id === slide.id);
@@ -2368,6 +2405,17 @@ function buildSlideBody(doc, slide) {
 
     const tools = doc.createElement('span');
     tools.className = 'edit-tools';
+    // 眼睛：**隱藏不是刪除**。scene 與 patient 刪不掉（每頁必備），所以要暫時
+    // 把病患收起來只看場景，只有這條路。
+    const shown = Scenarios.layerVisible(layer);
+    const eye = flowButton(doc, shown ? '👁' : '🚫', () => {
+      if (shown) layer.visible = false; else delete layer.visible;
+      persistScenarioEdit();
+    });
+    eye.className += ' layer-eye' + (shown ? '' : ' off');
+    eye.title = shown ? '隱藏這一層（預覽與投影都不顯示）' : '顯示這一層';
+    eye.setAttribute('aria-pressed', String(!shown));
+    tools.append(eye);
     // 只有病患有「歸位」與「設為預設」：它整場站同一個地方，所以情境層存得住一個預設。
     // 去背人物每一段站的位置本來就該各自調（這一段站左邊、下一段走近），
     // 沒有一個「原本的位置」可以回去——給它一顆歸位只會讓人以為自己弄壞了什麼。
@@ -2593,7 +2641,7 @@ function buildPreview() {
 
   const patient = Scenarios.layerOf(slide, 'patient');
   const patientImg = previewImage(layerAsset(patient, currentPatientPhotoAsset), '');
-  if (patient && patientImg) {
+  if (Scenarios.layerVisible(patient) && patientImg) {
     const item = previewItem('patient', patientImg);
     stage.appendChild(item);
     // 圖還沒載完就量不到尺寸，載完再擺一次
@@ -2602,7 +2650,7 @@ function buildPreview() {
   }
 
   const green = Scenarios.layerOf(slide, 'greenscreen');
-  if (green) {
+  if (Scenarios.layerVisible(green)) {
     const canvas = document.createElement('canvas');
     if (previewGreenscreen(green, canvas)) {
       const item = previewItem('greenscreen', canvas, green.complication);
@@ -2615,7 +2663,7 @@ function buildPreview() {
   }
 
   const text = Scenarios.layerOf(slide, 'text');
-  if (text) {
+  if (Scenarios.layerVisible(text)) {
     const node = Object.assign(document.createElement('div'),
       { className: 'preview-text', textContent: text.text });
     Object.assign(node.style, { fontSize: `${text.size / 10}cqw`, top: text.y + '%', left: text.x + '%' });
@@ -2818,20 +2866,43 @@ function stopMediaIn(root) {
   root.querySelectorAll('audio, video').forEach(el => { el.pause(); el.currentTime = 0; });
 }
 
-// **這兩顆管的是整場，不是某一頁。** 分工：
-//   播放場景 → 開場一次，把環境聲音與病患聲音這層底噪鋪起來
-//   流程翻頁 → 每頁觸發該頁的那一段演出（runStep），底噪不動
-//   全部停止 → 收掉全部，含底噪與投影
-// runStep 刻意不碰底噪，所以「播放場景」不是舊入口的殘留，而是**唯一**會讓環境聲音
-// 響起來的地方——拿掉它整場訓練就沒有環境音了。
-function playScene() {
-  poolBase.forEach(el => { el.currentTime = 0; el.play().catch(() => {}); });
-  playProjection();
+// **這一顆管的是整場的底噪，不是某一頁。** 分工：
+//   環境音（這裡）→ 把環境聲音與病患聲音這層底噪開起來或收掉
+//   流程翻頁      → 每頁觸發該頁的那一段演出（runStep），底噪不動
+// runStep 刻意不碰底噪，所以這裡是**唯一**會讓環境聲音響起來的地方。
+//
+// 原本是「播放場景」＋「全部停止」兩顆。前者名不副實——它播的是背景音，不是場景；
+// 後者的工作其實已經被別的東西涵蓋（翻頁會收掉上一段演出、關投影視窗會停投影），
+// 剩下唯一專屬的功能就是「把底噪關掉」，那正好是這顆按鈕自己的反向操作。
+// 所以收成一顆自帶開關的按鈕：按下去開，再按一次關。
+// 用一個明確的旗標，不讀 el.paused：play() 之後 paused 何時翻面各家瀏覽器不保證，
+// 讀它會讓按鈕文字偶爾停在錯的一邊。
+let ambienceOn = false;
+
+function ambiencePlaying() {
+  return ambienceOn;
 }
+
+function toggleAmbience() {
+  if (ambienceOn) {
+    poolBase.forEach(el => { el.pause(); el.currentTime = 0; });
+    stopProjection();
+    ambienceOn = false;
+  } else {
+    poolBase.forEach(el => { el.currentTime = 0; el.play().catch(() => {}); });
+    playProjection();
+    ambienceOn = true;
+  }
+  updateStageButtons();
+}
+
+// 離開情境或結束流程時要把所有聲音收乾淨——包含正在演的那一段
 function stopAll() {
   stopMediaIn($('media-pool'));
   stopComplicationProjection();
   stopProjection();
+  ambienceOn = false;
+  updateStageButtons();
 }
 
 // ---------- 快捷鍵 ----------
@@ -2876,8 +2947,8 @@ function handleFlowKey(e) {
 document.addEventListener('keydown', handleFlowKey);
 
 $('btn-project').addEventListener('click', openProjection);
-$('btn-play').addEventListener('click', playScene);
-$('btn-stop').addEventListener('click', stopFlow);   // 一顆就好：停聲音、收投影、流程回到未開始
+$('btn-play').addEventListener('click', toggleAmbience);
+
 window.addEventListener('beforeunload', () => {
   if (projectionWindow && !projectionWindow.closed) projectionWindow.close();
 });

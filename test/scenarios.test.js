@@ -286,6 +286,40 @@ test('patientHome 匯出後再匯入仍相同（round-trip）', () => {
   assert.deepEqual(twice[0].patientHome, once[0].patientHome);
 });
 
+// 圖層顯示／隱藏（2026-08-09）。與「刪除」是兩件事：scene 與 patient 刪不掉，
+// 所以「暫時只看場景」只能靠隱藏。
+test('圖層預設是顯示的，visible 只有寫 false 才算隱藏', () => {
+  const raw = [{ id: 'a', name: 'A', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 's1', title: 'a', layers: [
+      { type: 'scene' },
+      { type: 'patient', visible: false },
+      { type: 'text', text: '止血', visible: true },
+    ] }] }];
+  const { scenarios } = S.normalizeScenarios(raw, OPTIONS);
+  const slide = scenarios[0].slides[0];
+  assert.equal(S.layerVisible(S.layerOf(slide, 'scene')), true, '沒寫就是顯示');
+  assert.equal(S.layerVisible(S.layerOf(slide, 'patient')), false);
+  assert.equal(S.layerVisible(S.layerOf(slide, 'text')), true);
+  // visible: true 是預設值，不該被寫進正規化結果（否則匯出檔會被灌滿）
+  assert.equal('visible' in S.layerOf(slide, 'text'), false);
+});
+
+test('隱藏的圖層匯出時才寫 visible，顯示的不寫', () => {
+  const raw = [{ id: 'a', name: 'A', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 's1', title: 'a', layers: [
+      { type: 'scene' }, { type: 'patient', visible: false },
+    ] }] }];
+  const out = S.forExport(S.normalizeScenarios(raw, OPTIONS).scenarios)[0];
+  const layers = Object.fromEntries(out.slides[0].layers.map(l => [l.type, l]));
+  assert.equal(layers.patient.visible, false);
+  assert.equal('visible' in layers.scene, false);
+});
+
+test('layerVisible 對 null／undefined 回傳 false，不會炸', () => {
+  assert.equal(S.layerVisible(null), false);
+  assert.equal(S.layerVisible(undefined), false);
+});
+
 // sound 圖層在 2026-08-09 被移除（它從來沒有被播放過）。手改過 YAML 的人可能還存著
 // 一份，所以「含 sound 的資料仍要能匯入成功、只是少那一層」比「乾淨地拒絕」重要——
 // 那一層本來就不會發出聲音，丟掉不會讓人失去任何東西，但整份匯入失敗會。
