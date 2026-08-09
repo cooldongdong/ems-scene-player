@@ -251,19 +251,24 @@
     border: 1px solid var(--line); border-radius: 8px;
   }
   /* 情境層設定：整組共用，與下面的逐頁編輯用一條分隔線隔開 */
-  .scenario-fields {
-    margin-top: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+  /* 環境×急救事件：情境名稱底下的一行副標，點下去就地變下拉選單 */
+  .cond-chips {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 2px 0 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
   }
-  .scenario-fields > summary {
-    cursor: pointer; font-size: 13px; color: var(--muted); padding: 2px 0;
+  .cond-sep { color: var(--muted); opacity: .6; }
+  .cond-chip { display: inline-flex; }
+  .cond-chip-view {
+    background: transparent; border: 1px solid transparent; border-radius: 999px;
+    color: var(--muted); font: inherit; font-size: 13px;
+    padding: 3px 10px; cursor: pointer;
   }
-  .scenario-fields > summary:hover { color: var(--accent); }
-  .scenario-fields[open] > summary { margin-bottom: 4px; }
-  .scenario-fields[open] {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 18px;
+  .cond-chip-view:hover { color: var(--text); border-color: var(--line); background: var(--panel-2); }
+  .cond-chip-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .cond-chip-edit {
+    font: inherit; font-size: 13px; padding: 3px 8px; border-radius: 999px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--accent);
   }
-  .scenario-fields[open] > summary { grid-column: 1 / -1; }
-  .scenario-fields .edit-field span { flex: 0 0 auto; min-width: 56px; }
   .edit-action {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
     padding: 9px 11px; border-radius: 8px;
@@ -486,9 +491,6 @@ let currentScenario = null;
 let flowIndex = -1;                    // 指向「會播的頁」的 index；-1 = 尚未開始
 let panelLevel = 'browse';           // 'browse'（確認情境）| 'edit'（頁清單＋圖層，同一畫面）
 let editingSlideId = null;             // 'edit' 層正在展開哪一頁；null = 全部收起
-// 環境×急救事件的收合狀態。新增情境時預設展開（那是第一件要做的事），
-// 之後打開編輯頁一律收起——選定後幾乎不會再動。
-let scenarioFieldsOpen = false;
 // 片段 key -> 播放函式，由 pickAssets() 登記與清空
 const segmentPlayers = new Map();
 
@@ -1113,7 +1115,6 @@ function newScenario() {
   loadScenario(activeScenarios.find(s => s.id === scenario.id) || scenario);
   // 直接進編輯畫面：新情境的第一件事一定是挑環境×急救事件，停在瀏覽模式等於要人多按一次
   panelLevel = 'edit';
-  scenarioFieldsOpen = true;      // 新情境的第一件事就是挑組合，這時候要展開
   editingSlideId = currentScenario.slides[0].id;
   renderFlow();
   setStatus('新情境已建立——先選「環境」與「急救事件」，素材會跟著換。');
@@ -1176,42 +1177,68 @@ function changeScenarioCondition(patch) {
 
 // 情境層欄位：整個情境共用，不是某一頁的。舊入口那兩個選單被刪掉之後，
 // 這裡是**唯一**能設定環境×急救事件的地方——沒有它就只能改 YAML 再匯入。
-function buildScenarioFields(doc) {
-  // 平常收起來：這兩個值選定之後幾乎不會再動，但它們決定了整組素材，
-  // 所以摘要直接寫出目前的組合——收起來也看得到，只是不佔一整列。
-  const box = doc.createElement('details');
-  box.className = 'scenario-fields';
-  box.open = scenarioFieldsOpen;
-  box.addEventListener('toggle', () => { scenarioFieldsOpen = box.open; });
-  const sum = doc.createElement('summary');
-  sum.textContent = `${currentScenario.environment}／${currentScenario.medicalEvent}`;
-  box.appendChild(sum);
+// 環境×急救事件是**情境的身分標示**，不是一個要開關的設定面板——它們就寫在名稱底下，
+// 像副標題一樣。點下去就地變成下拉選單，選完變回文字，所以「看得到」與「能改」是
+// 同一個東西，不需要展開／收起這個多餘的動作。
+function conditionChip(doc, { value, options, groups, onCommit, label }) {
+  const wrap = doc.createElement('span');
+  wrap.className = 'cond-chip';
 
-  const envSel = doc.createElement('select');
-  // 沿用室內／室外分組，不要退回平鋪——環境有 5 個以上時分組才找得到
-  for (const [group, values] of environmentGroups()) {
-    const optgroup = Object.assign(doc.createElement('optgroup'), { label: group });
-    for (const value of values) {
-      optgroup.appendChild(Object.assign(doc.createElement('option'), { value, textContent: value }));
+  const chip = doc.createElement('button');
+  chip.type = 'button';
+  chip.className = 'cond-chip-view';
+  chip.textContent = value;
+  chip.title = `${label}：點一下更換`;
+
+  const sel = doc.createElement('select');
+  sel.className = 'cond-chip-edit';
+  sel.hidden = true;
+  sel.setAttribute('aria-label', label);
+  if (groups) {
+    for (const [group, values] of groups) {
+      const g = Object.assign(doc.createElement('optgroup'), { label: group });
+      for (const v of values) g.appendChild(Object.assign(doc.createElement('option'), { value: v, textContent: v }));
+      sel.appendChild(g);
     }
-    envSel.appendChild(optgroup);
+  } else {
+    for (const v of options) sel.appendChild(Object.assign(doc.createElement('option'), { value: v, textContent: v }));
   }
-  envSel.value = currentScenario.environment;
-  envSel.addEventListener('change', () => changeScenarioCondition({ environment: envSel.value }));
+  sel.value = value;
 
-  const medSel = doc.createElement('select');
-  for (const value of optionsFor('medicalEvent')) {
-    medSel.appendChild(Object.assign(doc.createElement('option'), { value, textContent: value }));
-  }
-  medSel.value = currentScenario.medicalEvent;
-  medSel.addEventListener('change', () => changeScenarioCondition({ medicalEvent: medSel.value }));
+  const close = () => { sel.hidden = true; chip.hidden = false; chip.focus(); };
+  chip.addEventListener('click', () => {
+    chip.hidden = true;
+    sel.hidden = false;
+    sel.focus();
+    // 有些瀏覽器支援直接把選單拉開，省一次點擊；不支援就當作一般 focus
+    if (typeof sel.showPicker === 'function') { try { sel.showPicker(); } catch { /* 忽略 */ } }
+  });
+  sel.addEventListener('change', () => onCommit(sel.value));   // 內含重繪
+  sel.addEventListener('blur', close);
+  sel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); close(); } });
 
-  for (const [label, sel] of [['環境', envSel], ['急救事件', medSel]]) {
-    const row = doc.createElement('label');
-    row.className = 'edit-field';
-    row.append(Object.assign(doc.createElement('span'), { textContent: label }), sel);
-    box.appendChild(row);
-  }
+  wrap.append(chip, sel);
+  return wrap;
+}
+
+function buildConditionChips(doc) {
+  const box = doc.createElement('div');
+  box.className = 'cond-chips';
+  box.append(
+    conditionChip(doc, {
+      label: '環境',
+      value: currentScenario.environment,
+      groups: environmentGroups(),        // 沿用室內／室外分組，環境多了才找得到
+      onCommit: v => changeScenarioCondition({ environment: v }),
+    }),
+    Object.assign(doc.createElement('span'), { className: 'cond-sep', textContent: '·' }),
+    conditionChip(doc, {
+      label: '急救事件',
+      value: currentScenario.medicalEvent,
+      options: optionsFor('medicalEvent'),
+      onCommit: v => changeScenarioCondition({ medicalEvent: v }),
+    }),
+  );
   return box;
 }
 
@@ -2027,8 +2054,8 @@ function buildFlowPanel(doc, preview) {
   head.append(back, title, counter);
   left.appendChild(head);
 
-  // 情境層的設定擺在最上面：先是「這一整組是什麼」，才是「這組裡的每一頁」
-  left.appendChild(buildScenarioFields(doc));
+  // 情境的身分（環境×急救事件）緊貼在名稱底下，像副標題
+  left.appendChild(buildConditionChips(doc));
 
   const bar = doc.createElement('div');
   bar.className = 'flow-actions toolbar-slot';
@@ -2686,7 +2713,6 @@ function buildBrowseView(doc, preview) {
   actions.className = 'browse-actions toolbar-slot';
   actions.appendChild(flowButton(doc, '編輯', () => {
     panelLevel = 'edit';
-    scenarioFieldsOpen = false;                       // 打開編輯頁時收起，不佔版面
     const now = flowIndex >= 0 && flowSteps[flowIndex] ? flowSteps[flowIndex] : currentScenario.slides[0];
     editingSlideId = now ? now.id : null;
     renderFlow();
