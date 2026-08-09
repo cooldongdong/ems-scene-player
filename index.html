@@ -243,9 +243,15 @@
   }
   .flow-row.drop-before::before { top: -1px; }
   .flow-row.drop-after::after { bottom: -1px; }
-  /* 眼睛：關掉時整列淡掉，一眼看出這層不會出現 */
-  .layer-eye { font-size: 12px; padding: 2px 7px; line-height: 1.5; }
-  .layer-eye.off { opacity: .55; }
+  /* 眼睛：擺在圖層名稱之前，關掉時整列淡掉並劃線，一眼看出這層不會出現 */
+  .layer-eye {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; padding: 0; border-radius: 7px; cursor: pointer;
+    background: transparent; border: 1px solid transparent; color: var(--muted);
+  }
+  .layer-eye:hover { color: var(--text); border-color: var(--line); background: var(--panel); }
+  .layer-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .layer-eye.off { color: var(--muted); opacity: .8; }
   .edit-action:has(.layer-eye.off) .layer-name,
   .edit-action:has(.layer-eye.off) .layer-asset { opacity: .45; text-decoration: line-through; }
   /* grab 游標只出現在把手上。整列可拖時游標整條都是 grab，會讓人以為哪裡都能拖 */
@@ -264,24 +270,16 @@
     border: 1px solid var(--line); border-radius: 8px;
   }
   /* 情境層設定：整組共用，與下面的逐頁編輯用一條分隔線隔開 */
-  /* 環境×急救事件：情境名稱底下的一行副標，點下去就地變下拉選單 */
-  .cond-chips {
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-    margin: 2px 0 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+  /* 情境設定列：沿用手風琴，但刻意不長得像一頁——沒有編號、沒有勾選框、不能拖 */
+  .settings-row { gap: 10px; }
+  .settings-gear { flex: none; color: var(--muted); font-size: 14px; line-height: 1; }
+  .settings-row:hover .settings-gear { color: var(--accent); }
+  .settings-item { margin-bottom: 8px; }
+  /* 與底下的頁之間留一條界線：它不是第 0 頁 */
+  .settings-item::after {
+    content: ''; display: block; height: 1px; background: var(--line); margin-top: 8px;
   }
-  .cond-sep { color: var(--muted); opacity: .6; }
-  .cond-chip { display: inline-flex; }
-  .cond-chip-view {
-    background: transparent; border: 1px solid transparent; border-radius: 999px;
-    color: var(--muted); font: inherit; font-size: 13px;
-    padding: 3px 10px; cursor: pointer;
-  }
-  .cond-chip-view:hover { color: var(--text); border-color: var(--line); background: var(--panel-2); }
-  .cond-chip-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .cond-chip-edit {
-    font: inherit; font-size: 13px; padding: 3px 8px; border-radius: 999px;
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--accent);
-  }
+  .settings-item.expanded::after { margin-top: 0; }
   .edit-action {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
     padding: 9px 11px; border-radius: 8px;
@@ -503,6 +501,8 @@ let currentScenario = null;
 let flowIndex = -1;                    // 指向「會播的頁」的 index；-1 = 尚未開始
 let panelLevel = 'browse';           // 'browse'（確認情境）| 'edit'（頁清單＋圖層，同一畫面）
 let editingSlideId = null;             // 'edit' 層正在展開哪一頁；null = 全部收起
+// 「情境設定」那一列有沒有展開。與 editingSlideId 一起構成一組手風琴：一次只開一個。
+let settingsExpanded = false;
 // 片段 key -> 播放函式，由 pickAssets() 登記與清空
 const segmentPlayers = new Map();
 
@@ -1127,7 +1127,9 @@ function newScenario() {
   loadScenario(activeScenarios.find(s => s.id === scenario.id) || scenario);
   // 直接進編輯畫面：新情境的第一件事一定是挑環境×急救事件，停在瀏覽模式等於要人多按一次
   panelLevel = 'edit';
-  editingSlideId = currentScenario.slides[0].id;
+  // 新情境的第一件事就是挑環境×急救事件，所以直接把設定攤開
+  settingsExpanded = true;
+  editingSlideId = null;
   renderFlow();
   setStatus('新情境已建立——先選「環境」與「急救事件」，素材會跟著換。');
 }
@@ -1189,69 +1191,66 @@ function changeScenarioCondition(patch) {
 
 // 情境層欄位：整個情境共用，不是某一頁的。舊入口那兩個選單被刪掉之後，
 // 這裡是**唯一**能設定環境×急救事件的地方——沒有它就只能改 YAML 再匯入。
-// 環境×急救事件是**情境的身分標示**，不是一個要開關的設定面板——它們就寫在名稱底下，
-// 像副標題一樣。點下去就地變成下拉選單，選完變回文字，所以「看得到」與「能改」是
-// 同一個東西，不需要展開／收起這個多餘的動作。
-function conditionChip(doc, { value, options, groups, onCommit, label }) {
-  const wrap = doc.createElement('span');
-  wrap.className = 'cond-chip';
+// 情境設定：頁清單最上面那一列，沿用同一套手風琴（只展開一個）。
+// **刻意不長得像一頁**——沒有編號、沒有啟用勾選、沒有眼睛、不能拖也不能刪，
+// 圖示用齒輪。它享受手風琴的一致性，但不該被誤認成第 0 張投影片。
+function buildScenarioSettingsRow(doc) {
+  const item = doc.createElement('div');
+  item.className = 'flow-item settings-item' + (settingsExpanded ? ' expanded' : '');
 
-  const chip = doc.createElement('button');
-  chip.type = 'button';
-  chip.className = 'cond-chip-view';
-  chip.textContent = value;
-  chip.title = `${label}：點一下更換`;
+  const row = doc.createElement('div');
+  row.className = 'flow-row settings-row clickable';
+  const gear = doc.createElement('span');
+  gear.className = 'settings-gear';
+  gear.textContent = '⚙';
+  gear.setAttribute('aria-hidden', 'true');
+  const name = doc.createElement('span');
+  name.className = 'flow-row-title';
+  name.textContent = '情境設定';
+  const meta = doc.createElement('span');
+  meta.className = 'flow-row-meta';
+  meta.textContent = `${currentScenario.environment}／${currentScenario.medicalEvent}`;
+  row.append(gear, name, meta);
+  row.addEventListener('click', () => {
+    settingsExpanded = !settingsExpanded;
+    if (settingsExpanded) editingSlideId = null;   // 一次只展開一個
+    renderFlow();
+  });
+  item.appendChild(row);
 
-  const sel = doc.createElement('select');
-  sel.className = 'cond-chip-edit';
-  sel.hidden = true;
-  sel.setAttribute('aria-label', label);
-  if (groups) {
-    for (const [group, values] of groups) {
+  if (settingsExpanded) {
+    const body = doc.createElement('div');
+    body.className = 'flow-body';
+    const inner = doc.createElement('div');
+    inner.className = 'flow-body-inner';
+
+    const envSel = doc.createElement('select');
+    // 沿用室內／室外分組，不要退回平鋪——環境多了才找得到
+    for (const [group, values] of environmentGroups()) {
       const g = Object.assign(doc.createElement('optgroup'), { label: group });
       for (const v of values) g.appendChild(Object.assign(doc.createElement('option'), { value: v, textContent: v }));
-      sel.appendChild(g);
+      envSel.appendChild(g);
     }
-  } else {
-    for (const v of options) sel.appendChild(Object.assign(doc.createElement('option'), { value: v, textContent: v }));
+    envSel.value = currentScenario.environment;
+    envSel.addEventListener('change', () => changeScenarioCondition({ environment: envSel.value }));
+
+    const medSel = doc.createElement('select');
+    for (const v of optionsFor('medicalEvent')) {
+      medSel.appendChild(Object.assign(doc.createElement('option'), { value: v, textContent: v }));
+    }
+    medSel.value = currentScenario.medicalEvent;
+    medSel.addEventListener('change', () => changeScenarioCondition({ medicalEvent: medSel.value }));
+
+    for (const [label, sel] of [['環境', envSel], ['急救事件', medSel]]) {
+      const field = doc.createElement('label');
+      field.className = 'edit-field';
+      field.append(Object.assign(doc.createElement('span'), { textContent: label }), sel);
+      inner.appendChild(field);
+    }
+    body.appendChild(inner);
+    item.appendChild(body);
   }
-  sel.value = value;
-
-  const close = () => { sel.hidden = true; chip.hidden = false; chip.focus(); };
-  chip.addEventListener('click', () => {
-    chip.hidden = true;
-    sel.hidden = false;
-    sel.focus();
-    // 有些瀏覽器支援直接把選單拉開，省一次點擊；不支援就當作一般 focus
-    if (typeof sel.showPicker === 'function') { try { sel.showPicker(); } catch { /* 忽略 */ } }
-  });
-  sel.addEventListener('change', () => onCommit(sel.value));   // 內含重繪
-  sel.addEventListener('blur', close);
-  sel.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); close(); } });
-
-  wrap.append(chip, sel);
-  return wrap;
-}
-
-function buildConditionChips(doc) {
-  const box = doc.createElement('div');
-  box.className = 'cond-chips';
-  box.append(
-    conditionChip(doc, {
-      label: '環境',
-      value: currentScenario.environment,
-      groups: environmentGroups(),        // 沿用室內／室外分組，環境多了才找得到
-      onCommit: v => changeScenarioCondition({ environment: v }),
-    }),
-    Object.assign(doc.createElement('span'), { className: 'cond-sep', textContent: '·' }),
-    conditionChip(doc, {
-      label: '急救事件',
-      value: currentScenario.medicalEvent,
-      options: optionsFor('medicalEvent'),
-      onCommit: v => changeScenarioCondition({ medicalEvent: v }),
-    }),
-  );
-  return box;
+  return item;
 }
 
 // ---------- 匯出／匯入 ----------
@@ -2075,9 +2074,6 @@ function buildFlowPanel(doc, preview) {
   head.append(back, title, counter);
   left.appendChild(head);
 
-  // 情境的身分（環境×急救事件）緊貼在名稱底下，像副標題
-  left.appendChild(buildConditionChips(doc));
-
   const bar = doc.createElement('div');
   bar.className = 'flow-actions toolbar-slot';
   bar.append(
@@ -2089,6 +2085,7 @@ function buildFlowPanel(doc, preview) {
 
   const list = doc.createElement('div');
   list.className = 'flow-list edit-pages';
+  list.appendChild(buildScenarioSettingsRow(doc));
   // flowSteps 現在就是「會播的頁」本身，欄位是 id 不是 slideId
   const currentSlideId = flowIndex >= 0 && flowSteps[flowIndex] ? flowSteps[flowIndex].id : null;
   currentScenario.slides.forEach((slide, index) => {
@@ -2207,6 +2204,7 @@ function buildFlowPanel(doc, preview) {
       row.classList.add('clickable');
       let pending = null;
       const toggleThis = () => {
+        settingsExpanded = false;                 // 一次只展開一個
         if (editingSlideId === slide.id) { editingSlideId = null; renderFlow(); return; }
         editingSlideId = slide.id;
         const i = flowSteps.findIndex(s => s.id === slide.id);
@@ -2344,6 +2342,39 @@ function buildNoteField(doc, slide) {
 
 // 展開在頁清單裡的那一頁的內容。標題不在這裡——它就是上面那一列的列名，
 // 寫兩次會讓人不知道該改哪一個。
+// emoji 的眼睛在不同系統上長相差很多（有的是彩色 3D、有的偏小），
+// 而且沒有「關掉」的對應字元可用（🚫 是禁止符號，不是閉眼）。改用內嵌 SVG：
+// 兩個狀態同一套線條、同一個粗細，關掉就是多一條斜線。
+function eyeIcon(doc, open) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = doc.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '1.4');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+
+  const outline = doc.createElementNS(NS, 'path');
+  outline.setAttribute('d', 'M1 8s2.6-4.3 7-4.3S15 8 15 8s-2.6 4.3-7 4.3S1 8 1 8z');
+  svg.appendChild(outline);
+
+  const pupil = doc.createElementNS(NS, 'circle');
+  pupil.setAttribute('cx', '8');
+  pupil.setAttribute('cy', '8');
+  pupil.setAttribute('r', '1.9');
+  svg.appendChild(pupil);
+
+  if (!open) {
+    const slash = doc.createElementNS(NS, 'path');
+    slash.setAttribute('d', 'M2.5 13.5 13.5 2.5');
+    svg.appendChild(slash);
+  }
+  return svg;
+}
+
 function buildSlideBody(doc, slide) {
   const wrap = doc.createElement('div');
   wrap.className = 'flow-body-inner';
@@ -2357,7 +2388,20 @@ function buildSlideBody(doc, slide) {
   [...slide.layers].reverse().forEach(layer => {
     const row = doc.createElement('div');
     row.className = 'edit-action';
-    row.append(Object.assign(doc.createElement('span'),
+    // 眼睛擺在最前面：它管的是「這一層在不在」，是讀這一列時第一個要知道的事。
+    // **隱藏不是刪除**——scene 與 patient 每頁必備、刪不掉，要暫時只看場景只有這條路。
+    const shown = Scenarios.layerVisible(layer);
+    const eye = doc.createElement('button');
+    eye.type = 'button';
+    eye.className = 'layer-eye' + (shown ? '' : ' off');
+    eye.title = shown ? '隱藏這一層（預覽與投影都不顯示）' : '顯示這一層';
+    eye.setAttribute('aria-pressed', String(!shown));
+    eye.appendChild(eyeIcon(doc, shown));
+    eye.addEventListener('click', () => {
+      if (shown) layer.visible = false; else delete layer.visible;
+      persistScenarioEdit();
+    });
+    row.append(eye, Object.assign(doc.createElement('span'),
       { className: 'layer-name', textContent: LAYER_LABEL[layer.type] || layer.type }));
 
     if (layer.type === 'greenscreen') {
@@ -2405,17 +2449,6 @@ function buildSlideBody(doc, slide) {
 
     const tools = doc.createElement('span');
     tools.className = 'edit-tools';
-    // 眼睛：**隱藏不是刪除**。scene 與 patient 刪不掉（每頁必備），所以要暫時
-    // 把病患收起來只看場景，只有這條路。
-    const shown = Scenarios.layerVisible(layer);
-    const eye = flowButton(doc, shown ? '👁' : '🚫', () => {
-      if (shown) layer.visible = false; else delete layer.visible;
-      persistScenarioEdit();
-    });
-    eye.className += ' layer-eye' + (shown ? '' : ' off');
-    eye.title = shown ? '隱藏這一層（預覽與投影都不顯示）' : '顯示這一層';
-    eye.setAttribute('aria-pressed', String(!shown));
-    tools.append(eye);
     // 只有病患有「歸位」與「設為預設」：它整場站同一個地方，所以情境層存得住一個預設。
     // 去背人物每一段站的位置本來就該各自調（這一段站左邊、下一段走近），
     // 沒有一個「原本的位置」可以回去——給它一顆歸位只會讓人以為自己弄壞了什麼。
@@ -2763,6 +2796,7 @@ function buildBrowseView(doc, preview) {
     panelLevel = 'edit';
     const now = flowIndex >= 0 && flowSteps[flowIndex] ? flowSteps[flowIndex] : currentScenario.slides[0];
     editingSlideId = now ? now.id : null;
+    settingsExpanded = false;                     // 舊情境進來時設定是收著的
     renderFlow();
   }));
   wrap.append(actions);
