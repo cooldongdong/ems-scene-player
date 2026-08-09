@@ -151,11 +151,17 @@
 
   /* 編輯頁 */
   .edit-field { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--muted); }
-  .edit-field input {
+  .edit-field input, .edit-field select {
     flex: 1 1 auto; padding: 8px 10px; font: inherit; font-size: 14px;
     background: var(--panel-2); color: var(--text);
     border: 1px solid var(--line); border-radius: 8px;
   }
+  /* 情境層設定：整組共用，與下面的逐頁編輯用一條分隔線隔開 */
+  .scenario-fields {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 18px;
+    margin-top: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+  }
+  .scenario-fields .edit-field span { flex: 0 0 auto; min-width: 56px; }
   .edit-action {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
     padding: 9px 11px; border-radius: 8px;
@@ -991,13 +997,17 @@ function newScenario() {
   const scenario = {
     id: nextScenarioId(),
     name: '新情境',
-    // 沒有載入中的情境時（例如剛開頁就按新增）退回第一個選項，而不是留空
+    // 只是個起點：環境×急救事件在編輯畫面選，所以這裡填什麼都會被馬上看見並改掉
     environment: currentEnv() || environmentGroups().flatMap(([, v]) => v)[0],
     medicalEvent: currentMed() || optionsFor('medicalEvent')[0],
     slides: [{ id: 's1', title: '抵達現場', enabled: true, layers: [newLayer('scene'), newLayer('patient')] }],
   };
   saveScenarioOverride(scenario);
   loadScenario(activeScenarios.find(s => s.id === scenario.id) || scenario);
+  // 直接進編輯畫面：新情境的第一件事一定是挑環境×急救事件，停在瀏覽模式等於要人多按一次
+  panelLevel = 'edit';
+  renderFlow();
+  setStatus('新情境已建立——先選「環境」與「急救事件」，素材會跟著換。');
 }
 
 function duplicateScenario(scenario) {
@@ -1026,6 +1036,67 @@ function renameScenario(name) {
   if (!currentScenario) return;
   currentScenario.name = name;
   persistScenarioEdit();
+}
+
+// **換環境或急救事件＝整組素材換掉**，不是改一個標籤。所以這裡不能只存起來就算了：
+// 素材要重挑，而且原本的綠幕人物可能在新組合下根本沒有素材——那幾頁會安靜地變成
+// 只有場景。用匯入情境時的同一套檢查把話講明白，別讓人自己發現。
+function changeScenarioCondition(patch) {
+  if (!currentScenario) return;
+  Object.assign(currentScenario, patch);
+  saveScenarioOverride(currentScenario);   // 內含 buildScenarios()，清單的 ⚠ 會跟著更新
+  pickAssets();                            // 不重挑的話畫面上還是舊組合的照片
+  syncScenarioActive();
+  buildFlowSteps();
+  renderFlow();
+  runStep(flowSteps[flowIndex] || flowSteps[0]);
+
+  const where = `${currentScenario.environment}／${currentScenario.medicalEvent}`;
+  // 兩種缺口要分開講：突發狀況缺 = 那幾頁沒有人物；基本角色缺 = 整場都沒有那樣東西。
+  // 只報前者的話，「工地×OHCA 沒有病患照片」這種會靜靜地發生（30 格裡只有 8 格有照片）。
+  const broken = scenarioBrokenComplications(currentScenario);
+  const missing = missingBaseLabels(currentScenario.environment, currentScenario.medicalEvent);
+  const warnings = [
+    missing.length ? `這個組合缺少：${missing.join('、')}` : '',
+    broken.length ? `這些突發狀況沒有素材，那幾頁不會有人物出現：${broken.join('、')}` : '',
+  ].filter(Boolean);
+  setStatus(warnings.length
+    ? `已改為「${where}」。⚠ ${warnings.join('；')}`
+    : `已改為「${where}」，素材齊全。`, warnings.length > 0);
+}
+
+// 情境層欄位：整個情境共用，不是某一頁的。舊入口那兩個選單被刪掉之後，
+// 這裡是**唯一**能設定環境×急救事件的地方——沒有它就只能改 YAML 再匯入。
+function buildScenarioFields(doc) {
+  const box = doc.createElement('div');
+  box.className = 'scenario-fields';
+
+  const envSel = doc.createElement('select');
+  // 沿用室內／室外分組，不要退回平鋪——環境有 5 個以上時分組才找得到
+  for (const [group, values] of environmentGroups()) {
+    const optgroup = Object.assign(doc.createElement('optgroup'), { label: group });
+    for (const value of values) {
+      optgroup.appendChild(Object.assign(doc.createElement('option'), { value, textContent: value }));
+    }
+    envSel.appendChild(optgroup);
+  }
+  envSel.value = currentScenario.environment;
+  envSel.addEventListener('change', () => changeScenarioCondition({ environment: envSel.value }));
+
+  const medSel = doc.createElement('select');
+  for (const value of optionsFor('medicalEvent')) {
+    medSel.appendChild(Object.assign(doc.createElement('option'), { value, textContent: value }));
+  }
+  medSel.value = currentScenario.medicalEvent;
+  medSel.addEventListener('change', () => changeScenarioCondition({ medicalEvent: medSel.value }));
+
+  for (const [label, sel] of [['環境', envSel], ['急救事件', medSel]]) {
+    const row = doc.createElement('label');
+    row.className = 'edit-field';
+    row.append(Object.assign(doc.createElement('span'), { textContent: label }), sel);
+    box.appendChild(row);
+  }
+  return box;
 }
 
 // ---------- 匯出／匯入 ----------
@@ -1844,6 +1915,9 @@ function buildFlowPanel(doc) {
     flowButton(doc, '停止', stopFlow),
   );
   wrap.appendChild(bar);
+
+  // 情境層的設定擺在頁清單之前：先是「這一整組是什麼」，才是「這組裡的每一頁」
+  wrap.appendChild(buildScenarioFields(doc));
 
   // 兩欄：左邊窄的頁清單（點哪頁預覽就跳哪頁），右邊是該頁的圖層編輯
   const cols = doc.createElement('div');
