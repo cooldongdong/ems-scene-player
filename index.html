@@ -45,6 +45,8 @@
   body.editing .workspace { grid-template-columns: minmax(0, 1fr); margin-top: 0; }
   body.editing .workspace-main { margin-top: 0; }
   /* 編輯畫面自己有一條頂欄，所以外框不需要再留一圈圓角與邊界 */
+  /* 編輯時把 .wrap 的左右留白還給預覽——那是整個畫面最需要空間的東西 */
+  body.editing .wrap { max-width: none; padding-left: 16px; padding-right: 16px; }
   body.editing .workspace-main.panel {
     border-radius: 0; border-left: 0; border-right: 0; border-top: 0;
     min-height: 100vh;
@@ -71,14 +73,32 @@
   /* ---------- 編輯畫面：左操作、右結果 ----------
      左欄放全部的編輯功能，右欄只有預覽而且 sticky——改哪一格眼睛都不用移動。
      舊版是預覽在上、編輯在下，捲一下就有一邊看不見。 */
+  /* 欄寬由 buildFlowPanel 寫在 style 上（存在 localStorage），這裡只給預設值 */
   .edit-screen {
-    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-    gap: 22px; align-items: start;
+    display: grid; grid-template-columns: 42% 10px minmax(0, 1fr);
+    gap: 0; align-items: start;
   }
+  .edit-main { padding-right: 14px; }
+  .edit-splitter {
+    align-self: stretch; min-height: 220px; cursor: col-resize;
+    position: relative; border-radius: 3px;
+  }
+  .edit-splitter::before {
+    content: ''; position: absolute; inset: 0 4px; border-radius: 3px;
+    background: var(--line); transition: background .15s;
+  }
+  .edit-splitter:hover::before, .edit-splitter:focus-visible::before { background: var(--accent); }
+  .edit-splitter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* 拖曳中：整頁禁止選字，游標一路維持 col-resize，不然滑出 bar 就變回箭頭 */
+  body.splitting { user-select: none; cursor: col-resize; }
   .edit-aside { position: sticky; top: 16px; }
   .edit-sticky { display: flex; flex-direction: column; gap: 8px; }
-  .preview-pager { justify-content: center; margin-top: 2px; }
-  .setup-bar { margin-bottom: 10px; }
+  /* 預覽與備註之間：翻頁靠左、整場設定靠右 */
+  .preview-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; flex-wrap: wrap; margin-top: 4px;
+  }
+  .preview-bar .flow-actions { margin: 0; }
   .note-field { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
   .note-label { font-size: 12px; color: var(--muted); letter-spacing: .5px; }
   .note-field textarea {
@@ -90,10 +110,13 @@
   .note-field textarea:focus { outline: none; border-color: var(--accent); }
   .note-field textarea::placeholder { color: var(--muted); }
   /* 預覽最高不超過視窗，否則頁一多右欄自己就先捲掉了 */
-  .edit-sticky .preview { max-height: calc(100vh - 90px); }
+  /* 上限放寬：欄拖寬之後若高度先撞到上限，會出現「拖了卻沒變大」 */
+  .edit-sticky .preview { max-height: calc(100vh - 32px); }
   /* 窄畫面疊成一欄，預覽回到最上面並維持 sticky */
   @media (max-width: 900px) {
-    .edit-screen { grid-template-columns: minmax(0, 1fr); }
+    .edit-screen { grid-template-columns: minmax(0, 1fr) !important; }
+    .edit-splitter { display: none; }
+    .edit-main { padding-right: 0; }
     .edit-aside { order: -1; top: 0; }
   }
 
@@ -2049,6 +2072,58 @@ function buildScenarioTools(doc) {
 }
 
 // L2：簡報頁清單 ＋ 播放控制
+// 左右欄寬。存進 localStorage：教官調好一次之後，不該每次重開都要再調一遍。
+const SPLIT_KEY = 'ems-scene-player:edit-split';
+const SPLIT_MIN = 22;      // 百分比。留下限，免得任一欄被拖到 0 寬就再也抓不回來
+const SPLIT_MAX = 62;
+let splitPercent = (() => {
+  const raw = Number(localStorage.getItem(SPLIT_KEY));
+  return Number.isFinite(raw) && raw >= SPLIT_MIN && raw <= SPLIT_MAX ? raw : 42;
+})();
+
+function splitterColumns() {
+  return `${splitPercent}% 10px minmax(0, 1fr)`;
+}
+
+function applySplit(next, screen) {
+  splitPercent = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, next));
+  screen.style.gridTemplateColumns = splitterColumns();
+  localStorage.setItem(SPLIT_KEY, String(Math.round(splitPercent)));
+}
+
+// 分隔 bar。**要有鍵盤路徑**：只給滑鼠拖的話，只用鍵盤的人就永遠停在預設寬度。
+function buildSplitter(doc, screen) {
+  const bar = doc.createElement('div');
+  bar.className = 'edit-splitter';
+  bar.tabIndex = 0;
+  bar.setAttribute('role', 'separator');
+  bar.setAttribute('aria-orientation', 'vertical');
+  bar.setAttribute('aria-label', '調整編輯區與預覽的寬度');
+  bar.title = '拖曳調整寬度（方向鍵也可以）';
+
+  const onMove = e => {
+    const rect = screen.getBoundingClientRect();
+    applySplit(((e.clientX - rect.left) / rect.width) * 100, screen);
+  };
+  const stop = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', stop);
+    document.body.classList.remove('splitting');
+  };
+  bar.addEventListener('mousedown', e => {
+    e.preventDefault();                     // 不要在拖曳過程中選到文字
+    document.body.classList.add('splitting');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', stop);
+  });
+  bar.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 5 : 2;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); applySplit(splitPercent - step, screen); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); applySplit(splitPercent + step, screen); }
+  });
+  return bar;
+}
+
 // 編輯畫面：**左欄操作、右欄結果，兩者永遠並排。**
 // 舊版是預覽在上、編輯在下，改一個欄位要往上看預覽，捲一下就有一邊看不見。
 // 圖層收進頁裡（只展開當前頁），情境層設定放最上面——由大到小：這一整組 → 這一頁 → 這一層。
@@ -2077,11 +2152,6 @@ function buildFlowPanel(doc, preview) {
     : '這個情境沒有可播的頁';
   head.append(back, title, counter);
   left.appendChild(head);
-  // 開始投影／播放環境音是**整場一次性**的設定，不是逐頁操作，所以留在頂部這一列，
-  // 與預覽底下的翻頁按鈕分開——把兩種尺度混在一起，教官上課時會找錯地方。
-  const setupBar = doc.createElement('div');
-  setupBar.className = 'flow-actions toolbar-slot setup-bar';
-  left.appendChild(setupBar);
 
   const list = doc.createElement('div');
   list.className = 'flow-list edit-pages';
@@ -2254,7 +2324,10 @@ function buildFlowPanel(doc, preview) {
   const stick = doc.createElement('div');
   stick.className = 'edit-sticky';
   if (preview) stick.appendChild(preview);
-  // 翻頁按鈕貼著預覽放：它們控制的就是上面那張圖，隔一整欄的話眼睛要來回跑
+  // 預覽與備註之間一整列：左邊是逐頁操作（翻頁），右邊是整場設定（投影、環境音）。
+  // 兩者都貼著預覽，但用左右分開表示它們是不同尺度的東西。
+  const bar = doc.createElement('div');
+  bar.className = 'preview-bar';
   const pager = doc.createElement('div');
   pager.className = 'flow-actions preview-pager';
   pager.append(
@@ -2262,14 +2335,18 @@ function buildFlowPanel(doc, preview) {
     flowButton(doc, '下一頁 ›', nextFlow,
       { primary: true, disabled: !flowSteps.length || flowIndex >= flowSteps.length - 1 }),
   );
-  stick.appendChild(pager);
+  const slot = doc.createElement('div');
+  slot.className = 'flow-actions toolbar-slot';
+  bar.append(pager, slot);
+  stick.appendChild(bar);
   // 「只有場景／字幕…」那行拿掉：左欄每一列的 meta 已經寫著同樣的事，
   // 而右欄的空間應該留給預覽本身與備註。
   const noteSlide = (flowIndex >= 0 && flowSteps[flowIndex]) || editingSlide();
   if (noteSlide) stick.appendChild(buildNoteField(doc, noteSlide));
   right.appendChild(stick);
 
-  screen.append(left, right);
+  screen.append(left, buildSplitter(doc, screen), right);
+  screen.style.gridTemplateColumns = splitterColumns();
   return screen;
 }
 
