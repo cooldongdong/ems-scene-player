@@ -35,6 +35,41 @@
     padding: 20px;
     margin-top: 24px;
   }
+
+  /* ---------- 編輯是「另一個畫面」 ----------
+     不是同一頁往下長出幾個控制項，而是整個版面換掉：標題區與情境清單收起來，
+     編輯佔滿整個寬度，靠頂部那條「‹ 回到情境」回去。使用者要「感覺自己進到了
+     另一個地方」，靠的是版面換掉，不是欄位重排。 */
+  body.editing header,
+  body.editing .workspace-side { display: none; }
+  body.editing .workspace { grid-template-columns: minmax(0, 1fr); margin-top: 0; }
+  body.editing .workspace-main { margin-top: 0; }
+  /* 編輯畫面自己有一條頂欄，所以外框不需要再留一圈圓角與邊界 */
+  body.editing .workspace-main.panel {
+    border-radius: 0; border-left: 0; border-right: 0; border-top: 0;
+    min-height: 100vh;
+  }
+
+  /* 標題平常是標題，雙擊才變輸入框 */
+  .inline-title { margin-top: 4px; }
+  .inline-title-view {
+    font-size: 17px; font-weight: 600; color: var(--text);
+    padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; cursor: text;
+  }
+  .inline-title-view:hover { border-color: var(--line); background: var(--panel-2); }
+  .inline-title-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .inline-title-edit {
+    width: 100%; padding: 6px 8px; font: inherit; font-size: 17px; font-weight: 600;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--accent); border-radius: 8px;
+  }
+
+  /* 每頁自己的複製／刪除：hover 或鍵盤 focus 時才浮出來。
+     常駐兩顆大按鈕會蓋過內容，而且「這頁」指的是哪一頁並不明顯。 */
+  .flow-row-tools { display: flex; gap: 4px; margin-left: 6px; opacity: 0; transition: opacity .12s; }
+  .flow-row:hover .flow-row-tools,
+  .flow-row:focus-within .flow-row-tools { opacity: 1; }
+  .flow-row-tools button { padding: 2px 7px; font-size: 12px; line-height: 1.5; }
   /* ---------- 兩欄工作區 ----------
      左邊挑情境、右邊看預覽並決定要演還是要改。預覽是選完情境後最重要的東西，
      所以右欄拿走全部剩餘寬度；窄畫面時疊成一欄，情境清單在上。 */
@@ -270,7 +305,6 @@
   .layer-name { flex: 0 0 68px; font-size: 13px; color: var(--muted); }
   .edit-tools { display: flex; gap: 4px; margin-left: auto; flex: none; }
   .edit-tools .flow-btn { font-size: 13px; padding: 5px 9px; }
-  .edit-danger { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 
   button {
     font-family: inherit; font-size: 15px; padding: 11px 22px;
@@ -385,10 +419,6 @@ const PATIENT_OVERLAY_DEFAULTS = { size: 85, x: 50, y: 57 };
 const patientOverlay = { enabled: false, ...PATIENT_OVERLAY_DEFAULTS };
 // 大小／位置改成直接在預覽上拖，不再有滑桿——同一件事給兩種操作方式，
 // 使用者會不知道該用哪個，而且兩邊的狀態遲早對不起來。
-const PATIENT_OVERLAY_SLIDERS = [];
-// 同一份 patientOverlay 可能同時顯示在多個地方（卡片、之後可能的其他面板），
-// 任一邊動了都要把其他的推到同一個值——比照下面綠幕的 complicationOverlayBoxes。
-const patientOverlayBoxes = [];        // { sync, enabled }
 
 // ---------- 流程（第二刀）----------
 // 「目前載入哪個情境、播到第幾頁」是一份狀態。編輯一律在主視窗——
@@ -410,7 +440,6 @@ const COMP_OVERLAY_SLIDERS = [
 // 一個突發狀況可以拆成好幾個片段，素材以 `突發狀況|片段` 當 key；
 // 但版面設定是整個突發狀況共用一份——同一個人站在同一個位置，不該每段重調一次。
 const complicationOverlays = {};       // 突發狀況 -> 版面設定
-const complicationOverlayBoxes = [];   // { comp, sync }：同組各片段的滑桿要一起動
 const complicationVideoAssets = {};    // 片段 -> 本次選到的綠幕素材
 let activeComplication = null;         // 目前疊在投影上的那一段（含預覽）
 let activeSegment = null;
@@ -468,18 +497,6 @@ function persistLayerLayout(type, comp) {
   LAYOUT_KEYS[type].forEach(k => { layer[k] = src[k]; });
   clearTimeout(layoutSaveTimer);
   layoutSaveTimer = setTimeout(() => saveScenarioOverride(currentScenario), 400);
-}
-
-function syncComplicationOverlayBoxes(comp) {
-  complicationOverlayBoxes.forEach(box => { if (box.comp === comp) box.sync(); });
-}
-
-// 同一份狀態可能有多組滑桿在顯示，滑桿與「疊加」開關都要一起同步
-function syncPatientOverlayBoxes() {
-  patientOverlayBoxes.forEach(box => {
-    box.sync();
-    if (box.enabled) box.enabled.checked = patientOverlay.enabled;
-  });
 }
 
 // 素材沒寫 segment 就是第 1 段；判斷在資料層，這裡只是轉呼叫
@@ -772,7 +789,6 @@ function runStep(slide) {
   // 版面存在這一頁的圖層上，換頁就要換一組——這是圖層模型取代舊 localStorage 的地方
   loadLayoutFromSlide(slide);
   renderProjectionPatient();
-  syncPatientOverlayBoxes();
   const green = Scenarios.layerOf(slide, 'greenscreen');
   if (!green) {
     // 沒有綠幕圖層的頁不該讓上一頁的人物還站在畫面上
@@ -931,9 +947,33 @@ function sortLayers(slide) {
 
 function newLayer(type) {
   const layer = { type, ...Scenarios.LAYER_DEFAULTS[type] };
+  // 病患站的位置由情境決定：新的一頁應該直接站在對的地方，而不是回到全域預設再拖一次
+  if (type === 'patient' && currentScenario && currentScenario.patientHome) {
+    Object.assign(layer, currentScenario.patientHome);
+  }
   if (type === 'greenscreen') layer.complication = firstUsableComplication();
   if (type === 'text') layer.text = '說明文字';
   return layer;
+}
+
+// 「歸位」對病患而言是回到**這個情境**的預設位置，不是全域預設——
+// 全域預設只是還沒有人設定過時的起點。
+function homeLayoutFor(type) {
+  if (type === 'patient' && currentScenario && currentScenario.patientHome) {
+    return currentScenario.patientHome;
+  }
+  return Scenarios.LAYER_DEFAULTS[type];
+}
+
+// 把目前這一頁的病患位置，收成整個情境的預設。之後新增的頁都從這裡開始。
+function setPatientHomeFromCurrent() {
+  const slide = editingSlide();
+  const layer = slide && Scenarios.layerOf(slide, 'patient');
+  if (!currentScenario || !layer) return;
+  currentScenario.patientHome = Object.fromEntries(
+    Object.keys(Scenarios.LAYER_DEFAULTS.patient).map(k => [k, layer[k]]));
+  persistScenarioEdit();
+  setStatus('已把這一頁的病患位置設為此情境的預設，之後新增的頁會從這裡開始。');
 }
 
 function addLayer(type) {
@@ -961,11 +1001,11 @@ function removeLayer(type) {
 
 // 病患通常不會動，拖歪了要能一鍵回到預設——位置存在圖層上，所以改的是同一份資料
 function resetLayerLayout(type, comp) {
-  const defaults = Scenarios.LAYER_DEFAULTS[type];
+  const defaults = homeLayoutFor(type);
   if (!defaults) return;
   const live = type === 'patient' ? patientOverlay : (comp ? complicationOverlay(comp) : null);
   if (live) Object.assign(live, defaults);
-  if (type === 'patient') { applyPatientOverlayLayout(); syncPatientOverlayBoxes(); }
+  if (type === 'patient') applyPatientOverlayLayout();
   else { applyComplicationOverlayLayout(); if (chromaRedraw && !chromaFrame) chromaRedraw(); }
   const slide = editingSlide();
   const layer = slide && Scenarios.layerOf(slide, type);
@@ -1556,7 +1596,9 @@ function startComplicationProjection(comp, segment, mode) {
   if (!hasProjectableComplication(asset)) return false;
   const doc = projectionDocument();
   if (!doc) {
-    setStatus('請先按「開始投影」，綠幕人物才有地方疊上去。', true);
+    // 編輯時沒開投影是正常狀態：位置照樣能調（預覽的去背是自己畫的，不經過投影視窗），
+    // 每翻一頁罵一次只會讓人以為被擋住了。真正要上課時才需要這句提醒。
+    if (panelLevel !== 'edit') setStatus('請先按「開始投影」，綠幕人物才有地方疊上去。', true);
     return false;
   }
 
@@ -1887,7 +1929,7 @@ function buildFlowPanel(doc) {
 
   const head = doc.createElement('div');
   head.className = 'flow-head';
-  const back = flowButton(doc, '‹ 預覽', () => { panelLevel = 'browse'; renderFlow(); });
+  const back = flowButton(doc, '‹ 回到情境', () => { panelLevel = 'browse'; renderFlow(); });
   const title = doc.createElement('span');
   title.className = 'flow-title';
   title.textContent = currentScenario.name;
@@ -1912,7 +1954,6 @@ function buildFlowPanel(doc) {
     flowButton(doc, '‹ 上一頁', prevFlow, { disabled: flowIndex <= 0 }),
     flowButton(doc, '下一頁 ›', nextFlow,
       { primary: true, disabled: !flowSteps.length || flowIndex >= flowSteps.length - 1 }),
-    flowButton(doc, '停止', stopFlow),
   );
   wrap.appendChild(bar);
 
@@ -1959,7 +2000,22 @@ function buildFlowPanel(doc) {
       : text ? '字幕'
       : (slide.note ? '等教官' : '純場景');
 
-    row.append(toggle, num, name, meta);
+    // 複製／刪除放在該頁自己這一列，hover 才浮出來——常駐兩顆大按鈕會蓋過內容，
+    // 而且「這頁」指的是哪一頁在底下的按鈕上並不明顯。
+    const rowTools = doc.createElement('span');
+    rowTools.className = 'flow-row-tools';
+    const dup = flowButton(doc, '⧉', () => duplicateSlide(slide.id));
+    dup.title = '複製這頁';
+    dup.setAttribute('aria-label', `複製「${slide.title}」`);
+    const del = flowButton(doc, '✕', () => {
+      // 刪除縮成小 icon 之後誤觸機率上升，所以保留確認；複製是可逆的就不問
+      if (confirm(`確定刪除「${slide.title}」？`)) deleteSlide(slide.id);
+    });
+    del.title = '刪除這頁';
+    del.setAttribute('aria-label', `刪除「${slide.title}」`);
+    rowTools.append(dup, del);
+
+    row.append(toggle, num, name, meta, rowTools);
 
     // 拖曳排序：把手就是整列，放開時看落在哪一列的上／下半決定插入位置
     row.draggable = true;
@@ -2031,6 +2087,57 @@ function buildFlowPanel(doc) {
 }
 
 // L3：編輯單一簡報頁
+// 標題平常就是標題，雙擊才變成輸入框——常駐一個 input 會讓「這是內容」看起來像
+// 「這是表單」。雙擊沒有鍵盤路徑，所以 focus 後按 Enter 也要能進入編輯，
+// 否則這個欄位對只用鍵盤的人等於消失。
+function inlineTitle(doc, slide) {
+  const box = doc.createElement('div');
+  box.className = 'inline-title';
+
+  const view = doc.createElement('div');
+  view.className = 'inline-title-view';
+  view.tabIndex = 0;
+  view.textContent = slide.title;
+  view.title = '雙擊（或按 Enter）改標題';
+
+  const edit = Object.assign(doc.createElement('input'),
+    { type: 'text', className: 'inline-title-edit', value: slide.title, hidden: true });
+
+  const open = () => {
+    edit.value = slide.title;
+    edit.hidden = false;
+    view.hidden = true;
+    edit.focus();
+    edit.select();
+  };
+  const close = commit => {
+    if (commit) {
+      const next = edit.value.trim();
+      if (next && next !== slide.title) {
+        slide.title = next;
+        persistScenarioEdit();     // 內含重繪，所以下面的還原只在沒有改動時才會被看到
+        return;
+      }
+    }
+    edit.hidden = true;
+    view.hidden = false;
+    view.focus();
+  };
+
+  view.addEventListener('dblclick', open);
+  view.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+  edit.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); close(true); }
+    if (e.key === 'Escape') { e.preventDefault(); close(false); }
+  });
+  edit.addEventListener('blur', () => close(true));
+
+  box.append(view, edit);
+  return box;
+}
+
 function buildSlideEditor(doc) {
   const wrap = doc.createElement('div');
   wrap.className = 'flow-panel';
@@ -2040,17 +2147,7 @@ function buildSlideEditor(doc) {
   wrap.appendChild(Object.assign(doc.createElement('div'),
     { className: 'panel-section-title', textContent: `編輯：${slide.title}` }));
 
-  const titleRow = doc.createElement('label');
-  titleRow.className = 'edit-field';
-  titleRow.append(Object.assign(doc.createElement('span'), { textContent: '標題' }));
-  const titleInput = Object.assign(doc.createElement('input'), { type: 'text', value: slide.title });
-  // input 事件每打一個字就存一次會太吵，改成離開欄位時才寫入
-  titleInput.addEventListener('change', () => {
-    slide.title = titleInput.value.trim() || slide.title;
-    persistScenarioEdit();
-  });
-  titleRow.appendChild(titleInput);
-  wrap.appendChild(titleRow);
+  wrap.appendChild(inlineTitle(doc, slide));
 
   // 給教官的提詞。**不會投影出去**——要投影給學員看的字請加 text 圖層。
   const noteRow = doc.createElement('label');
@@ -2122,8 +2219,15 @@ function buildSlideEditor(doc) {
     // 有位置的圖層給一顆歸位：病患通常不會動，拖歪了要能一鍵回到預設
     if (Object.keys(Scenarios.LAYER_DEFAULTS[layer.type] || {}).length) {
       const home = flowButton(doc, '歸位', () => resetLayerLayout(layer.type, layer.complication));
-      home.title = '回到預設位置與大小';
+      home.title = layer.type === 'patient'
+        ? '回到這個情境的病患預設位置' : '回到預設位置與大小';
       tools.append(home);
+    }
+    // 病患的預設位置是情境層的，所以要有一個地方把「現在這樣」變成「以後都這樣」
+    if (layer.type === 'patient') {
+      const asHome = flowButton(doc, '設為預設', setPatientHomeFromCurrent);
+      asHome.title = '把目前位置設為此情境的預設，之後新增的頁都從這裡開始';
+      tools.append(asHome);
     }
     // 場景與病患是每頁必備、由情境決定的，沒有刪除鍵；
     // 沒有上下鍵則是因為 z 順序由型別決定，投影視窗的 z-index 是寫死的
@@ -2144,13 +2248,6 @@ function buildSlideEditor(doc) {
   });
   if (addBar.children.length) wrap.appendChild(addBar);
 
-  const slideBar = doc.createElement('div');
-  slideBar.className = 'flow-actions edit-danger';
-  slideBar.append(
-    flowButton(doc, '複製這頁', () => duplicateSlide(slide.id)),
-    flowButton(doc, '刪除這頁', () => deleteSlide(slide.id)),
-  );
-  wrap.appendChild(slideBar);
   return wrap;
 }
 
@@ -2256,11 +2353,10 @@ function updatePreviewLayout() {
 
 // 動完之後三個地方都要跟上：投影畫面、還留著的滑桿、情境檔
 function commitPreviewLayout(type, comp) {
-  if (type === 'patient') { applyPatientOverlayLayout(); syncPatientOverlayBoxes(); }
+  if (type === 'patient') applyPatientOverlayLayout();
   else {
     applyComplicationOverlayLayout();
     if (chromaRedraw && !chromaFrame) chromaRedraw();
-    syncComplicationOverlayBoxes(comp);
   }
   persistLayerLayout(type, comp);
 }
@@ -2492,6 +2588,9 @@ function renderFlow() {
   bar.hidden = !currentScenario;
 
   document.querySelector('.workspace').classList.toggle('has-scenario', !!currentScenario);
+  // 編輯是「另一個地方」，不是「同一頁多長出幾個控制項」——情境清單與頁首整個收起來，
+  // 編輯佔滿畫面，靠頂部那條「‹ 回到情境」回去。分隔感靠的是版面換掉，不是欄位重排。
+  document.body.classList.toggle('editing', !!currentScenario && panelLevel === 'edit');
 
   // 只在還沒跑時啟動：這個函式會被自動翻頁自己呼叫，每次都重設就永遠不會前進
   if (panelLevel === 'browse') { if (!browseTimer) startBrowseAutoplay(); }
@@ -2624,7 +2723,7 @@ document.addEventListener('keydown', handleFlowKey);
 
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', playScene);
-$('btn-stop').addEventListener('click', stopAll);
+$('btn-stop').addEventListener('click', stopFlow);   // 一顆就好：停聲音、收投影、流程回到未開始
 window.addEventListener('beforeunload', () => {
   if (projectionWindow && !projectionWindow.closed) projectionWindow.close();
 });

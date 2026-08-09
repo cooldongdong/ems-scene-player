@@ -240,6 +240,52 @@ test('壞資料被跳過並留警告，不會讓整份載入失敗', () => {
   assert.equal(warnings.length >= 5, true, `警告太少：${warnings.length}`);
 });
 
+// 病患預設位置放在情境層（2026-08-09）。它只是「新頁的起點」與「歸位的目標」，
+// 不追溯改動已存在的頁——那些頁各自的值仍存在自己的圖層上。
+test('patientHome 沒寫時補全域預設', () => {
+  const raw = [{ id: 'a', name: 'A', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] }];
+  const { scenarios } = S.normalizeScenarios(raw, OPTIONS);
+  assert.deepEqual(scenarios[0].patientHome, S.LAYER_DEFAULTS.patient);
+});
+
+test('patientHome 超出範圍的值被夾回來，缺的欄位補預設', () => {
+  const raw = [{ id: 'a', name: 'A', environment: '工地', medicalEvent: '外傷出血',
+    patientHome: { size: 999, x: -40 },
+    slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] }];
+  const { scenarios } = S.normalizeScenarios(raw, OPTIONS);
+  assert.deepEqual(scenarios[0].patientHome,
+    { size: S.LAYER_RANGES.size[1], x: S.LAYER_RANGES.x[0], y: S.LAYER_DEFAULTS.patient.y });
+});
+
+test('patientHome 不影響已存在的頁——那些頁的病患位置仍是自己的', () => {
+  const raw = [{ id: 'a', name: 'A', environment: '工地', medicalEvent: '外傷出血',
+    patientHome: { size: 30, x: 10, y: 20 },
+    slides: [{ id: 's1', title: 'a', layers: [{ type: 'patient', size: 90, x: 60, y: 70 }] }] }];
+  const { scenarios } = S.normalizeScenarios(raw, OPTIONS);
+  const patient = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.deepEqual({ size: patient.size, x: patient.x, y: patient.y }, { size: 90, x: 60, y: 70 });
+});
+
+test('patientHome 跟全域預設一樣就不匯出，改過才寫', () => {
+  const base = { id: 'a', name: 'A', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] };
+  const plain = S.normalizeScenarios([base], OPTIONS).scenarios;
+  assert.equal('patientHome' in S.forExport(plain)[0], false);
+
+  const moved = S.normalizeScenarios([{ ...base, patientHome: { size: 40, x: 20, y: 30 } }], OPTIONS).scenarios;
+  assert.deepEqual(S.forExport(moved)[0].patientHome, { size: 40, x: 20, y: 30 });
+});
+
+test('patientHome 匯出後再匯入仍相同（round-trip）', () => {
+  const raw = [{ id: 'a', name: 'A', environment: '工地', medicalEvent: '外傷出血',
+    patientHome: { size: 44, x: 21, y: 33 },
+    slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] }];
+  const once = S.normalizeScenarios(raw, OPTIONS).scenarios;
+  const twice = S.normalizeScenarios(S.forExport(once), OPTIONS).scenarios;
+  assert.deepEqual(twice[0].patientHome, once[0].patientHome);
+});
+
 // sound 圖層在 2026-08-09 被移除（它從來沒有被播放過）。手改過 YAML 的人可能還存著
 // 一份，所以「含 sound 的資料仍要能匯入成功、只是少那一層」比「乾淨地拒絕」重要——
 // 那一層本來就不會發出聲音，丟掉不會讓人失去任何東西，但整份匯入失敗會。

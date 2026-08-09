@@ -101,6 +101,14 @@
     return Math.max(min, Math.min(max, Math.round(n)));
   }
 
+  // 一組版面值（size/x/y…）的正規化：缺的補預設、超出範圍的夾回來
+  function normalizeLayout(raw, defaults) {
+    const src = isObject(raw) ? raw : {};
+    const out = {};
+    for (const key of Object.keys(defaults)) out[key] = clampField(src[key], key, defaults[key]);
+    return out;
+  }
+
   function normalizeLayer(layer, sets, where, warn) {
     if (!isObject(layer)) {
       warn(`${where} 的圖層不是物件，已跳過`);
@@ -241,6 +249,10 @@
     // 做成頁圖層的話每換一頁就從頭重播，現場聽起來會像斷掉。
     // 'auto'（預設）＝依情境條件挑；'none'＝這場不要環境聲音；其餘視為素材 id。
     out.ambience = trimmed(scenario.ambience) || 'auto';
+    // 病患在畫面上的預設位置，放情境層而不是每頁各自預設：同一場訓練裡病患不會換位置，
+    // **新增一頁時應該直接站在對的地方**，而不是回到全域預設再手動拖一次。
+    // 只影響「新的頁」與「歸位」——已存在的頁各自的值仍存在自己的圖層上，不會被追溯改動。
+    out.patientHome = normalizeLayout(scenario.patientHome, LAYER_DEFAULTS.patient);
     return out;
   }
 
@@ -291,6 +303,11 @@
       const out = { id: s.id, name: s.name, environment: s.environment, medicalEvent: s.medicalEvent };
       if (s.note) out.note = s.note;
       if (s.ambience && s.ambience !== 'auto') out.ambience = s.ambience;
+      // 跟全域預設一樣就不寫，維持「手改時只看到真的動過的東西」
+      const home = s.patientHome || {};
+      if (Object.keys(LAYER_DEFAULTS.patient).some(k => home[k] !== LAYER_DEFAULTS.patient[k])) {
+        out.patientHome = { ...home };
+      }
       out.slides = asArray(s.slides).map(slide => {
         const o = { id: slide.id, title: slide.title };
         // enabled: true 是預設值，不寫進匯出檔，讓人手改時看到的是最小差異
