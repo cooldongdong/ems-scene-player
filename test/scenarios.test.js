@@ -320,6 +320,29 @@ test('layerVisible 對 null／undefined 回傳 false，不會炸', () => {
   assert.equal(S.layerVisible(undefined), false);
 });
 
+// ---------- 說明文字的定位模型 ----------
+// 這幾條顧的是「預覽拖到哪，投影就在哪」。之前兩端各寫一套（預覽 top/left 是中心點，
+// 投影卻是 left:0 + top:(y-50)%），拖起來對不上而且不會有任何地方報錯。
+test('textBoxStyle 的 x/y 就是文字方塊的中心點，size/10 是字級百分比', () => {
+  const style = S.textBoxStyle({ type: 'text', text: '止血', size: 40, x: 30, y: 80 }, 'vw');
+  assert.deepEqual(style, { left: '30%', top: '80%', fontSize: '4vw' });
+});
+
+test('textBoxStyle 預覽與投影只差單位，數值必須一模一樣', () => {
+  const layer = { type: 'text', text: '止血', size: 55, x: 25, y: 70 };
+  const 預覽 = S.textBoxStyle(layer, 'cqw');
+  const 投影 = S.textBoxStyle(layer, 'vw');
+  assert.equal(預覽.left, 投影.left);
+  assert.equal(預覽.top, 投影.top);
+  assert.equal(預覽.fontSize.replace('cqw', ''), 投影.fontSize.replace('vw', ''));
+});
+
+test('textBoxStyle 遇到缺欄位的圖層回退到預設值，不會產出 NaN%', () => {
+  const style = S.textBoxStyle({ type: 'text', text: '止血' }, 'vw');
+  assert.deepEqual(style, { left: '50%', top: '50%', fontSize: '4vw' });
+  assert.equal(S.textBoxStyle(null, 'vw'), null);
+});
+
 // sound 圖層在 2026-08-09 被移除（它從來沒有被播放過）。手改過 YAML 的人可能還存著
 // 一份，所以「含 sound 的資料仍要能匯入成功、只是少那一層」比「乾淨地拒絕」重要——
 // 那一層本來就不會發出聲音，丟掉不會讓人失去任何東西，但整份匯入失敗會。

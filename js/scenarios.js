@@ -19,7 +19,8 @@
   // 一頁 = 一組疊起來的圖層，宣告「這頁畫面上有什麼」。
   //
   // 順序就是這個陣列的順序，也就是投影視窗寫死的 z-index：
-  //   #projection-stage(底) < patient-layer(1) < complication-layer(2) < message(3)
+  //   #projection-stage(底) < patient-layer(1) < complication-layer(2) < projection-text(3)
+  // （#projection-message 不是圖層，是「素材找不到」那種全螢幕告示，另外壓在最上面）
   // 所以圖層**不能自由調上下**——順序由型別決定。要改得先重寫 renderer 的層管理。
   // 曾經有一個 sound 型別，2026-08-09 移除：它存得進來也匯得出去，但播放程式碼
   // 從來沒有讀過它——按下「＋ 聲音」只會得到一個永遠不會響的圖層。聲音改走
@@ -70,6 +71,23 @@
   // 而漏掉的那一處通常是投影端——教官藏起來的東西還投在學員面前。
   function layerVisible(layer) {
     return !!layer && layer.visible !== false;
+  }
+
+  // 說明文字的定位模型。**預覽與投影都必須讀這一份。**
+  // x/y 是「文字方塊中心點佔舞台寬高的百分比」，與 placePreviewItem 對圖片用的
+  // 那一套完全相同；size/10 是字級佔舞台寬度的百分比。差別只在單位——預覽的舞台
+  // 不是視窗，要用容器單位 cqw，投影的舞台就是視窗，用 vw。
+  // 兩邊各寫一次的下場實測過：投影端曾經是 left:0 + place-items:center（x 根本沒用到）
+  // 配 top:(y-50)%（y 也不是中心點），拖出來的位置跟投影對不上，而且沒有任何地方會報錯。
+  function textBoxStyle(layer, unit) {
+    if (!layer) return null;
+    const def = LAYER_DEFAULTS.text;
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+    return {
+      left: num(layer.x, def.x) + '%',
+      top: num(layer.y, def.y) + '%',
+      fontSize: num(layer.size, def.size) / 10 + unit,
+    };
   }
 
   // 取某一頁的某種圖層（每種型別一頁最多一個，見 normalizeSlide）
@@ -595,6 +613,7 @@
     LAYER_RANGES,
     layerOf,
     layerVisible,
+    textBoxStyle,
     BASE_ROLES,
     COMPLICATION_ROLES,
     optionSets,

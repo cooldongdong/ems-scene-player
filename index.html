@@ -78,7 +78,9 @@
     display: grid; grid-template-columns: 42% 10px minmax(0, 1fr);
     gap: 0; align-items: start;
   }
+  /* bar 兩側留一樣的間距——只給左欄的話，預覽會整個貼到 bar 上，看起來像沒對齊 */
   .edit-main { padding-right: 14px; }
+  .edit-aside { padding-left: 14px; }
   .edit-splitter {
     align-self: stretch; min-height: 220px; cursor: col-resize;
     position: relative; border-radius: 3px;
@@ -117,7 +119,7 @@
     .edit-screen { grid-template-columns: minmax(0, 1fr) !important; }
     .edit-splitter { display: none; }
     .edit-main { padding-right: 0; }
-    .edit-aside { order: -1; top: 0; }
+    .edit-aside { order: -1; top: 0; padding-left: 0; }
   }
 
   /* 一頁 = 一列標頭 ＋（展開時）它的內容。只有目前這一頁是展開的。 */
@@ -355,10 +357,14 @@
     cursor: nwse-resize; opacity: 0; transition: opacity .15s ease; touch-action: none;
   }
   .preview-item:hover .preview-handle, .preview-item.dragging .preview-handle { opacity: 1; }
+  /* 說明文字也是一個 .preview-item（外層負責定位與拖曳），這裡只管它長什麼樣。
+     寬度上限掛在外層而不是這裡：外層是 shrink-to-fit，在裡面寫百分比會變成
+     循環參照被瀏覽器當成沒設——與 .preview-media 踩過的是同一個坑。 */
+  .preview-item[data-type="text"] { max-width: 90%; }
   .preview-text {
-    position: absolute; transform: translate(-50%, -50%); text-align: center;
-    width: 90%; color: #fff; font-weight: 700; line-height: 1.3;
-    text-shadow: 0 2px 6px rgba(0,0,0,.85);
+    text-align: center; color: #fff; font-weight: 700; line-height: 1.3;
+    text-shadow: 0 2px 6px rgba(0,0,0,.85); white-space: pre-wrap;
+    filter: none;   /* 蓋掉 .preview-media 的 drop-shadow，文字用自己的 text-shadow */
   }
   .preview-empty, .preview-missing {
     position: absolute; inset: 0; display: grid; place-items: center;
@@ -562,7 +568,13 @@ function complicationOverlay(comp) {
 //   ② 存在瀏覽器裡，換一台電腦就不見，也沒辦法跟別人分享或送 PR
 // 圖層本來就要存自己的位置，所以這一層直接消失，不做遷移（2026-08-03 Dong 拍板）。
 
-const LAYOUT_KEYS = { patient: ['size', 'x', 'y'], greenscreen: ['size', 'x', 'y', 'tolerance'] };
+// text 沒有執行期物件（見 previewLayoutTarget），這裡列出來只是為了讓
+// persistLayerLayout 的迴圈對三種型別長得一樣——它對 text 是自己寫給自己。
+const LAYOUT_KEYS = {
+  patient: ['size', 'x', 'y'],
+  greenscreen: ['size', 'x', 'y', 'tolerance'],
+  text: ['size', 'x', 'y'],
+};
 
 function currentSlide() {
   return flowIndex >= 0 ? flowSteps[flowIndex] : null;
@@ -589,6 +601,17 @@ function loadLayoutFromSlide(slide) {
   }
 }
 
+// 拖曳／滑桿改的是哪一個物件。
+// patient 與 greenscreen 有執行期物件當中介（渲染程式抓著它的參考），圖層要等
+// persistLayerLayout 才同步；**text 沒有**，它的位置只存在圖層上，所以直接寫回圖層。
+// 不替 text 多開一個執行期物件，是因為那個物件唯一的用途就是「等一下再抄回圖層」——
+// 多一份就多一次抄漏的機會，而它連一幀都不需要被別人抓著參考。
+function previewLayoutTarget(type, comp, slide) {
+  if (type === 'patient') return patientOverlay;
+  if (type === 'greenscreen') return complicationOverlay(comp);
+  return Scenarios.layerOf(slide || currentSlide(), type);
+}
+
 // 拖滑桿會連續觸發，每一格都寫 localStorage 太重，收斂成一次
 let layoutSaveTimer = null;
 function persistLayerLayout(type, comp) {
@@ -596,7 +619,7 @@ function persistLayerLayout(type, comp) {
   const layer = slide && Scenarios.layerOf(slide, type);
   // 沒載入情境（直接按「產生情境」的臨時模式）就只在記憶體裡調，不寫進任何情境檔
   if (!currentScenario || !layer) return;
-  const src = type === 'patient' ? patientOverlay : complicationOverlay(comp);
+  const src = previewLayoutTarget(type, comp, slide);
   LAYOUT_KEYS[type].forEach(k => { layer[k] = src[k]; });
   clearTimeout(layoutSaveTimer);
   layoutSaveTimer = setTimeout(() => saveScenarioOverride(currentScenario), 400);
@@ -910,6 +933,8 @@ function runStep(slide) {
   // 素材缺了不能靜靜跳過——教官會以為自己按錯
   stopSegmentMedia();
   stopComplicationProjection();
+  // 說明文字仍要換成這一頁的：素材缺席不代表上一頁的字該繼續投在學員面前
+  renderProjectionText(slide);
   setStatus(`這一頁的素材不存在：${green.complication}${green.segment ? ` 片段 ${green.segment}` : ''}`, true);
 }
 
@@ -918,16 +943,13 @@ function runStep(slide) {
 function renderProjectionText(slide) {
   const doc = projectionDocument();
   if (!doc) return;
-  const box = doc.getElementById('projection-message');
+  const box = doc.getElementById('projection-text');
   const layer = slide && Scenarios.layerOf(slide, 'text');
   if (!Scenarios.layerVisible(layer)) { box.style.display = 'none'; box.textContent = ''; return; }
   box.textContent = layer.text;
-  box.style.display = 'grid';
-  box.style.background = 'transparent';
-  box.style.placeItems = 'center';
-  box.style.fontSize = `clamp(18px, ${layer.size / 10}vw, 96px)`;
-  box.style.left = 0;
-  box.style.top = `${layer.y - 50}%`;
+  box.style.display = 'block';
+  // 投影的舞台就是視窗，所以單位是 vw；預覽用 cqw。座標公式只有這一份。
+  Object.assign(box.style, Scenarios.textBoxStyle(layer, 'vw'));
 }
 
 function gotoFlow(index) {
@@ -1482,6 +1504,17 @@ function projectionMarkup() {
     transform: translate(-50%, -50%);
     filter: drop-shadow(0 12px 18px rgba(0,0,0,.4));
   }
+  /* 說明文字圖層。定位模型與預覽共用 Scenarios.textBoxStyle()：
+     x/y 是文字方塊的中心點，size/10 是字級佔畫面寬度的百分比。
+     **不要和下面的 #projection-message 合用同一個元素**——那顆是全螢幕黑底告示，
+     兩者擠在一起就得靠 inline style 互相蓋來蓋去，投影位置也就是那樣歪掉的。 */
+  #projection-text {
+    position: absolute; z-index: 3; display: none;
+    transform: translate(-50%, -50%); max-width: 90%;
+    color: #fff; font-weight: 700; line-height: 1.3; text-align: center;
+    white-space: pre-wrap; text-shadow: 0 2px 6px rgba(0,0,0,.85);
+  }
+  /* 素材找不到、瀏覽器擋自動播放這類告示：整面蓋掉，不是圖層 */
   #projection-message {
     position: absolute; inset: 0; z-index: 3; display: none; place-items: center;
     padding: 32px; background: #000; color: #fff; text-align: center;
@@ -1511,6 +1544,7 @@ function projectionMarkup() {
   <main id="projection-stage" aria-label="情境環境投影"></main>
   <div id="projection-patient-layer" aria-label="病患照片疊加層"></div>
   <div id="projection-complication-layer" aria-label="突發狀況綠幕疊加層"></div>
+  <div id="projection-text" aria-label="說明文字疊加層"></div>
   <div id="projection-message" role="status"></div>
   <div id="projection-controls">
     <span id="projection-hint">將視窗移至投影螢幕後，可進入全螢幕</span>
@@ -2089,6 +2123,9 @@ function applySplit(next, screen) {
   splitPercent = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, next));
   screen.style.gridTemplateColumns = splitterColumns();
   localStorage.setItem(SPLIT_KEY, String(Math.round(splitPercent)));
+  // 圖片的尺寸上限是依舞台寬度換算成 px 存下來的，欄寬一變就過期——
+  // 不重算的話會看到「bar 拖寬了，人物卻沒跟著變大」。
+  updatePreviewLayout();
 }
 
 // 分隔 bar。**要有鍵盤路徑**：只給滑鼠拖的話，只用鍵盤的人就永遠停在預設寬度。
@@ -2638,9 +2675,13 @@ function previewGreenscreen(layer, canvas) {
 // 所以要換算成 px；百分比放在 shrink-to-fit 的外層裡會被瀏覽器當成沒設。
 function placePreviewItem(item, layout, stage) {
   if (!item || !layout) return;
-  const rect = stage.getBoundingClientRect();
   item.style.left = layout.x + '%';
   item.style.top = layout.y + '%';
+  // 文字的 size 是字級不是寬高上限，而且字級用容器單位就會自己跟著舞台縮放，
+  // 不必等下一次 updatePreviewLayout——所以它走自己這條，且與投影共用同一個公式。
+  const text = item.querySelector('.preview-text');
+  if (text) { text.style.fontSize = Scenarios.textBoxStyle(layout, 'cqw').fontSize; return; }
+  const rect = stage.getBoundingClientRect();
   const media = item.querySelector('.preview-media');
   if (media) {
     media.style.maxWidth = (rect.width * layout.size / 100) + 'px';
@@ -2650,6 +2691,7 @@ function placePreviewItem(item, layout, stage) {
 
 function previewLayoutOf(slide, type) {
   if (type === 'patient') return Scenarios.layerOf(slide, 'patient') ? patientOverlay : null;
+  if (type === 'text') return Scenarios.layerOf(slide, 'text');
   const green = Scenarios.layerOf(slide, 'greenscreen');
   return green ? complicationOverlay(green.complication) : null;
 }
@@ -2659,7 +2701,7 @@ function updatePreviewLayout() {
   if (!stage) return;
   const slide = (panelLevel === 'edit' && editingSlide()) || currentSlide();
   if (!slide) return;
-  for (const type of ['patient', 'greenscreen']) {
+  for (const type of ['patient', 'greenscreen', 'text']) {
     const item = stage.querySelector(`.preview-item[data-type="${type}"]`);
     placePreviewItem(item, previewLayoutOf(slide, type), stage);
   }
@@ -2669,7 +2711,8 @@ function updatePreviewLayout() {
 
 // 動完之後三個地方都要跟上：投影畫面、還留著的滑桿、情境檔
 function commitPreviewLayout(type, comp) {
-  if (type === 'patient') applyPatientOverlayLayout();
+  if (type === 'text') renderProjectionText(currentSlide());
+  else if (type === 'patient') applyPatientOverlayLayout();
   else {
     applyComplicationOverlayLayout();
     if (chromaRedraw && !chromaFrame) chromaRedraw();
@@ -2680,10 +2723,13 @@ function commitPreviewLayout(type, comp) {
 // 直接在預覽上操作：整塊拖＝移動，右下角把手＝縮放。
 // 縮放用「離中心的距離比例」而不是單看水平位移，因為從任何一角拉都該是同一種手感。
 function makePreviewDraggable(item, type, comp, stage) {
-  const layout = () => (type === 'patient' ? patientOverlay : complicationOverlay(comp));
+  const layout = () => previewLayoutTarget(type, comp);
   const handle = item.querySelector('.preview-handle');
 
   const start = (event, mode) => {
+    // patient／greenscreen 的執行期物件一定在，但 text 讀的是圖層，可能已經被刪掉
+    // （預覽還沒重繪）——這裡不擋的話，展開運算子會先炸在 null 上
+    if (!layout()) return;
     event.preventDefault();
     event.stopPropagation();
     const rect = stage.getBoundingClientRect();
@@ -2708,7 +2754,9 @@ function makePreviewDraggable(item, type, comp, stage) {
       }
       placePreviewItem(item, l, stage);
       // 投影要即時跟著動，教官才看得到自己在調什麼
-      if (type === 'patient') applyPatientOverlayLayout(); else applyComplicationOverlayLayout();
+      if (type === 'text') renderProjectionText(currentSlide());
+      else if (type === 'patient') applyPatientOverlayLayout();
+      else applyComplicationOverlayLayout();
     };
     const end = e => {
       item.classList.remove('dragging');
@@ -2781,12 +2829,17 @@ function buildPreview() {
     }
   }
 
+  // 說明文字也可以直接拖：它的 size/x/y 本來就在圖層上，之前只是沒接上拖曳，
+  // 所以要挪一句字幕得回去改 YAML。位置寫回的是圖層本身（見 previewLayoutTarget）。
   const text = Scenarios.layerOf(slide, 'text');
   if (Scenarios.layerVisible(text)) {
     const node = Object.assign(document.createElement('div'),
       { className: 'preview-text', textContent: text.text });
-    Object.assign(node.style, { fontSize: `${text.size / 10}cqw`, top: text.y + '%', left: text.x + '%' });
-    stage.appendChild(node);
+    const item = previewItem('text', node);
+    item.title = '拖曳移動，拉右下角改字級';
+    stage.appendChild(item);
+    placePreviewItem(item, text, stage);
+    if (editable) makePreviewDraggable(item, 'text', null, stage);
   }
 
   if (panelLevel === 'browse') {
@@ -2825,7 +2878,7 @@ function buildPreview() {
     caption.textContent = stepLabel(slide);
     wrap.appendChild(caption);
   } else {
-    stage.title = '拖曳人物移動、拉右下角縮放';
+    stage.title = '拖曳人物或說明文字移動、拉右下角縮放';
   }
   // stage 要先進 DOM 才量得到寬高，尺寸換算靠的是它
   requestAnimationFrame(() => updatePreviewLayout());
