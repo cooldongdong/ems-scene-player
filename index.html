@@ -77,6 +77,8 @@
   }
   .edit-aside { position: sticky; top: 16px; }
   .edit-sticky { display: flex; flex-direction: column; gap: 8px; }
+  .preview-pager { justify-content: center; margin-top: 2px; }
+  .setup-bar { margin-bottom: 10px; }
   .note-field { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
   .note-label { font-size: 12px; color: var(--muted); letter-spacing: .5px; }
   .note-field textarea {
@@ -264,6 +266,8 @@
 
   /* 編輯頁 */
   .edit-field { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  /* 標籤固定寬、不換行，兩個欄位的輸入區才會左側切齊 */
+  .edit-field > span { flex: 0 0 64px; white-space: nowrap; }
   .edit-field input, .edit-field select {
     flex: 1 1 auto; padding: 8px 10px; font: inherit; font-size: 14px;
     background: var(--panel-2); color: var(--text);
@@ -2073,15 +2077,11 @@ function buildFlowPanel(doc, preview) {
     : '這個情境沒有可播的頁';
   head.append(back, title, counter);
   left.appendChild(head);
-
-  const bar = doc.createElement('div');
-  bar.className = 'flow-actions toolbar-slot';
-  bar.append(
-    flowButton(doc, '‹ 上一頁', prevFlow, { disabled: flowIndex <= 0 }),
-    flowButton(doc, '下一頁 ›', nextFlow,
-      { primary: true, disabled: !flowSteps.length || flowIndex >= flowSteps.length - 1 }),
-  );
-  left.appendChild(bar);
+  // 開始投影／播放環境音是**整場一次性**的設定，不是逐頁操作，所以留在頂部這一列，
+  // 與預覽底下的翻頁按鈕分開——把兩種尺度混在一起，教官上課時會找錯地方。
+  const setupBar = doc.createElement('div');
+  setupBar.className = 'flow-actions toolbar-slot setup-bar';
+  left.appendChild(setupBar);
 
   const list = doc.createElement('div');
   list.className = 'flow-list edit-pages';
@@ -2254,6 +2254,15 @@ function buildFlowPanel(doc, preview) {
   const stick = doc.createElement('div');
   stick.className = 'edit-sticky';
   if (preview) stick.appendChild(preview);
+  // 翻頁按鈕貼著預覽放：它們控制的就是上面那張圖，隔一整欄的話眼睛要來回跑
+  const pager = doc.createElement('div');
+  pager.className = 'flow-actions preview-pager';
+  pager.append(
+    flowButton(doc, '‹ 上一頁', prevFlow, { disabled: flowIndex <= 0 }),
+    flowButton(doc, '下一頁 ›', nextFlow,
+      { primary: true, disabled: !flowSteps.length || flowIndex >= flowSteps.length - 1 }),
+  );
+  stick.appendChild(pager);
   // 「只有場景／字幕…」那行拿掉：左欄每一列的 meta 已經寫著同樣的事，
   // 而右欄的空間應該留給預覽本身與備註。
   const noteSlide = (flowIndex >= 0 && flowSteps[flowIndex]) || editingSlide();
@@ -2731,14 +2740,16 @@ function buildPreview() {
   }
 
   wrap.appendChild(stage);
-  const caption = document.createElement('p');
-  caption.className = 'preview-caption';
-  // 瀏覽時講這一頁演什麼，編輯時才提示可以拖
-  caption.textContent = panelLevel === 'browse'
-    ? stepLabel(slide)
-    : `預覽：${slide.title}　·　拖曳人物移動、拉右下角縮放`
-      + (slide.note ? `　·　提詞（不投影）：${slide.note}` : '');
-  wrap.appendChild(caption);
+  // 瀏覽模式才用文字講這一頁演什麼；編輯模式左欄每一列都已經寫著同樣的事，
+  // 而右欄的空間應該留給預覽本身。拖曳提示改掛在 stage 上，需要時才浮出來。
+  if (panelLevel === 'browse') {
+    const caption = document.createElement('p');
+    caption.className = 'preview-caption';
+    caption.textContent = stepLabel(slide);
+    wrap.appendChild(caption);
+  } else {
+    stage.title = '拖曳人物移動、拉右下角縮放';
+  }
   // stage 要先進 DOM 才量得到寬高，尺寸換算靠的是它
   requestAnimationFrame(() => updatePreviewLayout());
   return wrap;
