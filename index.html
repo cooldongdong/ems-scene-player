@@ -48,6 +48,10 @@
   body.editing .workspace-main.panel {
     border-radius: 0; border-left: 0; border-right: 0; border-top: 0;
     min-height: 100vh;
+    /* **這一行是右欄 sticky 能不能成立的關鍵。** 瀏覽模式為了右欄滑入動畫設了
+       overflow:hidden，而 overflow 不是 visible 的祖先會讓底下所有 position:sticky
+       失效——不會報錯，只是安靜地跟著捲走。 */
+    overflow: visible;
   }
 
   /* 標題平常是標題，雙擊才變輸入框 */
@@ -63,6 +67,35 @@
     background: var(--panel-2); color: var(--text);
     border: 1px solid var(--accent); border-radius: 8px;
   }
+
+  /* ---------- 編輯畫面：左操作、右結果 ----------
+     左欄放全部的編輯功能，右欄只有預覽而且 sticky——改哪一格眼睛都不用移動。
+     舊版是預覽在上、編輯在下，捲一下就有一邊看不見。 */
+  .edit-screen {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    gap: 22px; align-items: start;
+  }
+  .edit-aside { position: sticky; top: 16px; }
+  .edit-sticky { display: flex; flex-direction: column; gap: 8px; }
+  /* 預覽最高不超過視窗，否則頁一多右欄自己就先捲掉了 */
+  .edit-sticky .preview { max-height: calc(100vh - 90px); }
+  /* 窄畫面疊成一欄，預覽回到最上面並維持 sticky */
+  @media (max-width: 900px) {
+    .edit-screen { grid-template-columns: minmax(0, 1fr); }
+    .edit-aside { order: -1; top: 0; }
+  }
+
+  /* 一頁 = 一列標頭 ＋（展開時）它的內容。只有目前這一頁是展開的。 */
+  .flow-item { border-radius: 10px; }
+  .flow-item.expanded {
+    background: var(--panel-2); border: 1px solid var(--line);
+    margin: 6px 0; overflow: hidden;
+  }
+  .flow-item.expanded > .flow-row { border-bottom: 1px solid var(--line); border-radius: 0; }
+  .flow-body { padding: 4px 12px 14px; }
+  .flow-body-inner > .panel-section-title:first-child { margin-top: 8px; }
+  .flow-row-title .inline-title-view { font-size: 14px; font-weight: 500; padding: 3px 6px; }
+  .flow-row-title .inline-title-edit { font-size: 14px; padding: 3px 6px; }
 
   /* 每頁自己的複製／刪除：hover 或鍵盤 focus 時才浮出來。
      常駐兩顆大按鈕會蓋過內容，而且「這頁」指的是哪一頁並不明顯。 */
@@ -211,7 +244,7 @@
   }
   .edit-action select { width: auto; flex: none; }
   .edit-action input { flex: 1 1 140px; min-width: 100px; }
-  .edit-action input.edit-seg { flex: 0 1 130px; }
+  .edit-action .edit-seg { flex: 0 1 130px; }
   /* ---------- 預覽 ----------
      16:9 的框，圖層用與投影端相同的百分比定位；container-type 讓文字大小
      跟著框寬走（cqw），縮圖與投影上的比例才會一致。 */
@@ -285,14 +318,6 @@
   .browse-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
   .browse-actions .flow-btn { font-size: 15px; padding: 11px 22px; }
 
-  /* 編輯模式：左邊窄的頁清單、右邊該頁的圖層。播放控制在預覽正下方，
-     所以「跳到某頁」與「改那頁」不再分屬兩個畫面。 */
-  .edit-cols {
-    display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-    gap: 16px; align-items: start; margin-top: 14px;
-  }
-  @media (max-width: 900px) { .edit-cols { grid-template-columns: 1fr; } }
-  .edit-pane { min-width: 0; }
   .edit-pages .flow-row { padding: 7px 9px; font-size: 13px; gap: 8px; }
   .edit-pages .flow-row-meta { font-size: 11px; }
   .flow-row-num {
@@ -1924,10 +1949,16 @@ function buildScenarioTools(doc) {
 }
 
 // L2：簡報頁清單 ＋ 播放控制
-function buildFlowPanel(doc) {
-  const wrap = doc.createElement('div');
-  wrap.className = 'flow-panel';
-  if (!currentScenario) return wrap;
+// 編輯畫面：**左欄操作、右欄結果，兩者永遠並排。**
+// 舊版是預覽在上、編輯在下，改一個欄位要往上看預覽，捲一下就有一邊看不見。
+// 圖層收進頁裡（只展開當前頁），情境層設定放最上面——由大到小：這一整組 → 這一頁 → 這一層。
+function buildFlowPanel(doc, preview) {
+  const screen = doc.createElement('div');
+  screen.className = 'edit-screen';
+  if (!currentScenario) return screen;
+
+  const left = doc.createElement('div');
+  left.className = 'edit-main';
 
   const head = doc.createElement('div');
   head.className = 'flow-head';
@@ -1945,14 +1976,10 @@ function buildFlowPanel(doc) {
     ? (flowIndex < 0 ? `尚未開始 · 共 ${flowSteps.length} 步` : `第 ${flowIndex + 1} / ${flowSteps.length} 步`)
     : '這個情境沒有可播的頁';
   head.append(back, title, counter);
-  wrap.appendChild(head);
+  left.appendChild(head);
 
-  const now = doc.createElement('p');
-  now.className = 'flow-now';
-  now.textContent = flowIndex < 0
-    ? '按「開始」或方向鍵 → 進入第一步'
-    : stepLabel(flowSteps[flowIndex]);
-  wrap.appendChild(now);
+  // 情境層的設定擺在最上面：先是「這一整組是什麼」，才是「這組裡的每一頁」
+  left.appendChild(buildScenarioFields(doc));
 
   const bar = doc.createElement('div');
   bar.className = 'flow-actions toolbar-slot';
@@ -1961,20 +1988,25 @@ function buildFlowPanel(doc) {
     flowButton(doc, '下一頁 ›', nextFlow,
       { primary: true, disabled: !flowSteps.length || flowIndex >= flowSteps.length - 1 }),
   );
-  wrap.appendChild(bar);
+  left.appendChild(bar);
 
-  // 情境層的設定擺在頁清單之前：先是「這一整組是什麼」，才是「這組裡的每一頁」
-  wrap.appendChild(buildScenarioFields(doc));
-
-  // 兩欄：左邊窄的頁清單（點哪頁預覽就跳哪頁），右邊是該頁的圖層編輯
-  const cols = doc.createElement('div');
-  cols.className = 'edit-cols';
+  left.appendChild(Object.assign(doc.createElement('div'),
+    { className: 'panel-section-title', textContent: '頁' }));
 
   const list = doc.createElement('div');
   list.className = 'flow-list edit-pages';
   // flowSteps 現在就是「會播的頁」本身，欄位是 id 不是 slideId
   const currentSlideId = flowIndex >= 0 && flowSteps[flowIndex] ? flowSteps[flowIndex].id : null;
+  // 沒有選定要編哪一頁時，預設編目前這一頁
+  if (!editingSlide() && currentSlideId) editingSlideId = currentSlideId;
+
   currentScenario.slides.forEach((slide, index) => {
+    // 展開的只有一頁。多開會讓左欄長回舊版那麼長，捲動的問題原地復發。
+    const expanded = slide.id === editingSlideId;
+
+    const item = doc.createElement('div');
+    item.className = 'flow-item' + (expanded ? ' expanded' : '');
+
     const row = doc.createElement('div');
     row.className = 'flow-row' + (slide.id === currentSlideId ? ' current' : '')
       + (slide.enabled === false ? ' off' : '');
@@ -1992,9 +2024,13 @@ function buildFlowPanel(doc) {
     num.className = 'flow-row-num';
     num.textContent = index + 1;
 
-    const name = doc.createElement('span');
-    name.className = 'flow-row-title';
-    name.textContent = slide.title;
+    // 列名就是這一頁的標題，雙擊直接改——展開的內容裡不再重複一個標題欄位
+    const name = inlineTitle(doc, {
+      value: slide.title,
+      hint: '雙擊（或按 Enter）改這一頁的標題',
+      className: 'flow-row-title',
+      onCommit: next => { slide.title = next; persistScenarioEdit(); },
+    });
 
     // 一眼看出這頁畫面上有什麼：綠幕人物最重要，其次是字幕，都沒有就是純場景
     const meta = doc.createElement('span');
@@ -2023,10 +2059,12 @@ function buildFlowPanel(doc) {
 
     row.append(toggle, num, name, meta, rowTools);
 
-    // 拖曳排序：把手就是整列，放開時看落在哪一列的上／下半決定插入位置
+    // 拖曳排序：把手是這一列（不是整個 item，展開的內容裡有輸入框要能正常選字）
     row.draggable = true;
     row.dataset.slideId = slide.id;
     row.addEventListener('dragstart', e => {
+      // 在標題輸入框裡選字時不該啟動整列拖曳
+      if (e.target.closest('.inline-title-edit')) { e.preventDefault(); return; }
       e.dataTransfer.setData('text/plain', slide.id);
       e.dataTransfer.effectAllowed = 'move';
       row.classList.add('dragging');
@@ -2046,47 +2084,51 @@ function buildFlowPanel(doc) {
       moveSlide(draggedId, to);
     });
 
-    // 點整列＝跳到那一頁：預覽、投影、右邊的圖層編輯全部跟著換，不必再按一次「編輯」
+    // 點整列＝展開這一頁並跳過去：預覽、投影、底下的圖層全部跟著換
     if (slide.enabled !== false) {
       row.classList.add('clickable');
       row.addEventListener('click', e => {
-        if (e.target.closest('.flow-toggle')) return;
+        if (e.target.closest('.flow-toggle, .flow-row-tools, .inline-title')) return;
         editingSlideId = slide.id;
         const i = flowSteps.findIndex(s => s.id === slide.id);
         if (i >= 0) gotoFlow(i); else renderFlow();
       });
     }
-    list.appendChild(row);
+
+    item.appendChild(row);
+    if (expanded) {
+      const body = doc.createElement('div');
+      body.className = 'flow-body';
+      body.appendChild(buildSlideBody(doc, slide));
+      item.appendChild(body);
+    }
+    list.appendChild(item);
   });
+  left.appendChild(list);
 
-  const pages = doc.createElement('div');
-  pages.className = 'edit-pane';
-  pages.append(
-    Object.assign(doc.createElement('div'), { className: 'panel-section-title', textContent: '頁' }),
-    list,
-    (() => {
-      const b = doc.createElement('div');
-      b.className = 'flow-actions';
-      b.append(
-        flowButton(doc, '＋ 新增頁', addSlide),
-      );
-      return b;
-    })(),
-  );
+  const addBar = doc.createElement('div');
+  addBar.className = 'flow-actions';
+  addBar.append(flowButton(doc, '＋ 新增頁', addSlide));
+  left.appendChild(addBar);
 
-  // 沒有選定要編哪一頁時，預設編目前這一頁——右欄不該是空的
-  if (!editingSlide() && currentSlideId) editingSlideId = currentSlideId;
-  const layers = doc.createElement('div');
-  layers.className = 'edit-pane edit-layers';
-  layers.append(editingSlide()
-    ? buildSlideEditor(doc)
-    : Object.assign(doc.createElement('p'), {
-        className: 'sidebar-empty', textContent: '左邊點一頁，這裡編它的圖層。' }));
+  // 右欄：預覽固定在視窗上緣，捲到第 8 頁時它還在
+  const right = doc.createElement('div');
+  right.className = 'edit-aside';
+  const stick = doc.createElement('div');
+  stick.className = 'edit-sticky';
+  if (preview) stick.appendChild(preview);
+  const now = doc.createElement('p');
+  now.className = 'flow-now';
+  now.textContent = flowIndex < 0
+    ? '按「開始」或方向鍵 → 進入第一步'
+    : stepLabel(flowSteps[flowIndex]);
+  stick.appendChild(now);
+  right.appendChild(stick);
 
-  cols.append(pages, layers);
-  wrap.appendChild(cols);
-  return wrap;
+  screen.append(left, right);
+  return screen;
 }
+
 
 // L3：編輯單一簡報頁
 // 標題平常就是標題，雙擊才變成輸入框——常駐一個 input 會讓「這是內容」看起來像
@@ -2139,20 +2181,12 @@ function inlineTitle(doc, { value, onCommit, hint = '雙擊（或按 Enter）改
   return box;
 }
 
-function buildSlideEditor(doc) {
+// 展開在頁清單裡的那一頁的內容。標題不在這裡——它就是上面那一列的列名，
+// 寫兩次會讓人不知道該改哪一個。
+function buildSlideBody(doc, slide) {
   const wrap = doc.createElement('div');
-  wrap.className = 'flow-panel';
-  const slide = editingSlide();
+  wrap.className = 'flow-body-inner';
   if (!slide) return wrap;
-
-  wrap.appendChild(Object.assign(doc.createElement('div'),
-    { className: 'panel-section-title', textContent: `編輯：${slide.title}` }));
-
-  wrap.appendChild(inlineTitle(doc, {
-    value: slide.title,
-    hint: '雙擊（或按 Enter）改這一頁的標題',
-    onCommit: next => { slide.title = next; persistScenarioEdit(); },
-  }));
 
   // 給教官的提詞。**不會投影出去**——要投影給學員看的字請加 text 圖層。
   const noteRow = doc.createElement('label');
@@ -2197,10 +2231,18 @@ function buildSlideEditor(doc) {
       compSel.addEventListener('change', () => updateLayer('greenscreen', { complication: compSel.value }));
       row.appendChild(compSel);
 
-      const seg = Object.assign(doc.createElement('input'),
-        { type: 'text', className: 'edit-seg', placeholder: '片段（留空＝第一段）', value: layer.segment || '' });
-      seg.addEventListener('change', () => updateLayer('greenscreen', { segment: seg.value.trim() }));
-      row.appendChild(seg);
+      // 一個突發狀況可以拆成好幾段連續的演出（例：「肇事雙方爭吵」有 3 段影片），
+      // 教官依現場節奏一段一段放。這裡原本是自由輸入的文字框，但合法值其實只有
+      // 這個狀況真正存在的那幾段——填 5 進去不會有任何東西出現，而且看不出哪裡錯。
+      const segments = complicationSegments(layer.complication, currentEnv(), currentMed());
+      const seg = doc.createElement('select');
+      seg.className = 'edit-seg';
+      segments.forEach((n, i) => seg.appendChild(Object.assign(doc.createElement('option'),
+        { value: String(n), textContent: `第 ${n} 段` + (i === 0 ? '（預設）' : '') })));
+      seg.value = String(layer.segment || segments[0]);
+      seg.addEventListener('change', () => updateLayer('greenscreen', { segment: seg.value }));
+      // 只有一段的狀況沒有可選的東西，露出一個永遠只有一個選項的選單只是雜訊
+      if (segments.length > 1) row.appendChild(seg);
     }
 
     if (layer.type === 'text') {
@@ -2577,10 +2619,10 @@ function renderFlow() {
   let node;
   if (!currentScenario) node = document.createElement('div');
   else if (panelLevel === 'browse') node = buildBrowseView(document, preview);
-  else node = buildFlowPanel(document);   // 編輯模式：頁清單與圖層編輯在同一層
+  // 編輯模式自己把預覽收進右欄（sticky），所以預覽是傳進去的，不是疊在外面
+  else node = buildFlowPanel(document, preview);
 
-  // 瀏覽模式自己把預覽組進去（標題在上、預覽居中、出口在下）；編輯模式預覽固定在最上面
-  box.replaceChildren(...(panelLevel === 'browse' || !preview ? [node] : [preview, node]));
+  box.replaceChildren(node);
   box.hidden = !currentScenario;
 
   // 三顆按鈕是搬過去的同一個節點，不是重建的——id、listener、啟用狀態都還在
