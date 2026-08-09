@@ -50,10 +50,59 @@
   body.editing .workspace-main.panel {
     border-radius: 0; border-left: 0; border-right: 0; border-top: 0;
     min-height: 100vh;
-    /* **這一行是右欄 sticky 能不能成立的關鍵。** 瀏覽模式為了右欄滑入動畫設了
-       overflow:hidden，而 overflow 不是 visible 的祖先會讓底下所有 position:sticky
-       失效——不會報錯，只是安靜地跟著捲走。 */
+    /* 窄畫面（單欄）時右欄仍靠 sticky 跟著捲，**這一行是它能不能成立的關鍵**：
+       瀏覽模式為了右欄滑入動畫設了 overflow:hidden，而 overflow 不是 visible 的
+       祖先會讓底下所有 position:sticky 失效——不會報錯，只是安靜地跟著捲走。
+       寬畫面走底下那組固定高度的版面，那裡整頁本來就不捲，用不到 sticky。 */
     overflow: visible;
+  }
+
+  /* ---------- 編輯畫面鎖成一個視窗高 ----------
+     整頁不再捲，只有左欄的頁清單自己捲。這解掉的是同一個病的兩個症狀：
+     ① **分隔 bar 跟視窗一樣高**——bar 的高度是 grid 的列高，而在「整頁往下長」
+        的版面裡，列高等於較高那一欄的內容高度，跟視窗沒有關係。
+     ② **滾輪不再把整個編輯畫面推走**——「‹ 回到情境」的出口、預覽、備註
+        永遠在原地，眼睛不用追。
+     窄畫面（單欄）刻意不套用：那裡本來就該是一條可以一路捲到底的長頁面。 */
+  @media (min-width: 901px) {
+    body.editing { overflow: hidden; }
+    body.editing .wrap {
+      height: 100vh; padding-top: 16px; padding-bottom: 0;
+      display: flex; flex-direction: column;
+    }
+    /* 從 .wrap 到 .edit-screen 每一層都要「有確定高度且不自己撐高」，
+       中間漏掉任何一層，高度就會在那裡退回內容高度，底下全部跟著失效。
+       min-height:0 是必要的：flex 子項預設 min-height:auto，會被內容撐破。 */
+    body.editing .workspace { flex: 1; min-height: 0; align-items: stretch; }
+    body.editing .workspace-main.panel {
+      min-height: 0; display: flex; flex-direction: column;
+    }
+    body.editing #flow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    body.editing .edit-screen { flex: 1; min-height: 0; align-items: stretch; }
+
+    /* 左欄：頂部（‹ 回到情境、情境名稱、第 N/M 步）釘住，只有頁清單捲 */
+    body.editing .edit-main { display: flex; flex-direction: column; min-height: 0; }
+    body.editing .flow-head { flex: none; }
+    body.editing .edit-main .flow-list {
+      flex: 1; min-height: 0; overflow-y: auto;
+      padding-right: 4px;          /* 捲軸不要壓在列的右邊界上 */
+      scrollbar-gutter: stable;
+    }
+
+    /* 右欄：整個畫面都不動了，sticky 沒有意義也沒有作用（它需要一個會捲的祖先）。
+       視窗變矮時讓步的是預覽——備註與翻頁列是固定高度的，而且都是不能被切掉的東西。 */
+    body.editing .edit-aside { position: static; display: flex; min-height: 0; }
+    body.editing .edit-sticky { flex: 1; min-height: 0; }
+    body.editing .edit-sticky .preview {
+      flex: 1; min-height: 0; max-height: none; margin-bottom: 8px;
+      display: grid; place-items: center; container-type: size;
+    }
+    /* 舞台**必須維持 16:9**：圖層的 x/y 是百分比，框一被壓扁，預覽的位置就
+       對不上投影。所以不用 max-height 夾（那會拉伸），而是直接算出
+       「塞得進這個框的 16:9 寬度」——高不夠就用高換算，寬不夠就用寬。 */
+    body.editing .edit-sticky .preview-stage {
+      width: min(100cqw, calc(100cqh * 16 / 9)); height: auto;
+    }
   }
 
   /* 標題平常是標題，雙擊才變輸入框 */
@@ -303,12 +352,15 @@
   .settings-row { gap: 10px; }
   .settings-gear { flex: none; color: var(--muted); font-size: 14px; line-height: 1; }
   .settings-row:hover .settings-gear { color: var(--accent); }
-  .settings-item { margin-bottom: 8px; }
-  /* 與底下的頁之間留一條界線：它不是第 0 頁 */
-  .settings-item::after {
-    content: ''; display: block; height: 1px; background: var(--line); margin-top: 8px;
-  }
-  .settings-item.expanded::after { margin-top: 0; }
+  /* 與底下的頁之間留一條界線：它不是第 0 頁。
+     **這條線是 .flow-list 自己的一格，不是設定列的 ::after。** 畫在設定列裡面時，
+     展開狀態的 .flow-item 會用 overflow:hidden ＋ 外框把它吃掉（線消失），而且
+     上下間距會變成兩種——上面是 ::after 的 margin 8px，下面是 grid gap 6px。
+     當成格子畫就兩邊都吃 gap，永遠對稱，也永遠不會被誰蓋住。 */
+  .flow-divider { height: 1px; background: var(--line); }
+  /* 展開的 .flow-item 會多帶 6px 上下外距（讓開著的那張卡透氣），但設定列底下
+     緊接著界線，多出來的 6px 只會讓界線看起來偏下——所以這一側交還給 gap。 */
+  .settings-item.expanded { margin-bottom: 0; }
   .edit-action {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
     padding: 9px 11px; border-radius: 8px;
@@ -2193,6 +2245,8 @@ function buildFlowPanel(doc, preview) {
   const list = doc.createElement('div');
   list.className = 'flow-list edit-pages';
   list.appendChild(buildScenarioSettingsRow(doc));
+  // 情境設定與逐頁編輯之間的界線（理由見 .flow-divider 的註解）
+  list.appendChild(Object.assign(doc.createElement('div'), { className: 'flow-divider' }));
   // flowSteps 現在就是「會播的頁」本身，欄位是 id 不是 slideId
   const currentSlideId = flowIndex >= 0 && flowSteps[flowIndex] ? flowSteps[flowIndex].id : null;
   currentScenario.slides.forEach((slide, index) => {
