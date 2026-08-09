@@ -21,8 +21,10 @@
   // 順序就是這個陣列的順序，也就是投影視窗寫死的 z-index：
   //   #projection-stage(底) < patient-layer(1) < complication-layer(2) < message(3)
   // 所以圖層**不能自由調上下**——順序由型別決定。要改得先重寫 renderer 的層管理。
-  // sound 不是視覺層，但它同樣是「這頁存在的東西」，放同一個清單比另立欄位好懂。
-  const LAYER_TYPES = ['scene', 'patient', 'greenscreen', 'text', 'sound'];
+  // 曾經有一個 sound 型別，2026-08-09 移除：它存得進來也匯得出去，但播放程式碼
+  // 從來沒有讀過它——按下「＋ 聲音」只會得到一個永遠不會響的圖層。聲音改走
+  // 「一個突發狀況一個聲音」（綠幕是影片就用原聲，否則用配音檔），那條路在媒體池裡。
+  const LAYER_TYPES = ['scene', 'patient', 'greenscreen', 'text'];
 
   // 環境影像與病患照片是「選完情境就決定」的東西，編輯時換不掉，所以每頁必備、不可刪。
   // normalizeSlide 會替沒寫的頁自動補上；編輯器也不給這兩層刪除鍵。
@@ -35,7 +37,6 @@
     patient: { size: 85, x: 50, y: 57 },
     greenscreen: { size: 70, x: 50, y: 55, tolerance: 40 },
     text: { size: 40, x: 50, y: 50 },
-    sound: {},
   };
 
   // 與主畫面滑桿的 min/max 一致；超出範圍的值會被夾回來而不是整層丟掉

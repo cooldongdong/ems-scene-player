@@ -240,6 +240,30 @@ test('壞資料被跳過並留警告，不會讓整份載入失敗', () => {
   assert.equal(warnings.length >= 5, true, `警告太少：${warnings.length}`);
 });
 
+// sound 圖層在 2026-08-09 被移除（它從來沒有被播放過）。手改過 YAML 的人可能還存著
+// 一份，所以「含 sound 的資料仍要能匯入成功、只是少那一層」比「乾淨地拒絕」重要——
+// 那一層本來就不會發出聲音，丟掉不會讓人失去任何東西，但整份匯入失敗會。
+test('已移除的 sound 圖層被安靜丟掉，不會讓整個情境失敗', () => {
+  const raw = [{
+    id: 'has-sound', name: '含聲音層', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{
+      id: 's1', title: 'a',
+      layers: [{ type: 'scene' }, { type: 'sound', asset: 'as001' }, { type: 'text', text: '止血' }],
+    }],
+  }];
+  const { scenarios, warnings } = S.normalizeScenarios(raw, OPTIONS);
+  assert.equal(scenarios.length, 1, '整個情境不該因為一個不支援的圖層而消失');
+  const types = scenarios[0].slides[0].layers.map(l => l.type);
+  assert.equal(types.includes('sound'), false, 'sound 圖層應該被丟掉');
+  assert.deepEqual(types.filter(t => t !== 'patient').sort(), ['scene', 'text']);
+  assert.match(warnings.join(''), /sound/, '要留下一則說明為什麼那層不見了');
+});
+
+test('sound 已不在支援的圖層型別內', () => {
+  assert.equal(S.LAYER_TYPES.includes('sound'), false);
+  assert.equal('sound' in S.LAYER_DEFAULTS, false);
+});
+
 test('id 重複時保留第一筆並警告', () => {
   const one = { id: 'dup', name: 'A', environment: '工地', medicalEvent: '外傷出血',
     slides: [{ id: 's1', title: 'a', layers: [{ type: 'scene' }] }] };
