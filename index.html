@@ -93,6 +93,25 @@
          「間距整個變大了」。列距要由 gap 決定，不是由「還剩多少空間」決定。 */
       align-content: start;
     }
+    /* 捲軸交給頁面自己畫：系統預設那條在深色底上是一塊亮灰，比它旁邊的任何
+       一列都搶眼。細一點、用邊框色、平常淡、滑到才明顯。
+       標準屬性與 ::-webkit-scrollbar 兩套都寫：新版 Chrome／Firefox／Safari 走
+       上面那兩行（且會讓 webkit 那組失效），舊版 Safari／Chrome 走下面那組。 */
+    body.editing .edit-main .flow-list {
+      scrollbar-width: thin;
+      scrollbar-color: var(--line) transparent;
+    }
+    body.editing .edit-main .flow-list::-webkit-scrollbar { width: 10px; }
+    body.editing .edit-main .flow-list::-webkit-scrollbar-track { background: transparent; }
+    body.editing .edit-main .flow-list::-webkit-scrollbar-thumb {
+      /* border + background-clip：讓拇指看起來比軌道窄，兩側留白靠邊框做出來 */
+      background: var(--line); border-radius: 999px;
+      border: 3px solid transparent; background-clip: content-box;
+    }
+    body.editing .edit-main .flow-list:hover { scrollbar-color: #454b57 transparent; }
+    body.editing .edit-main .flow-list::-webkit-scrollbar-thumb:hover {
+      background: #454b57; background-clip: content-box;
+    }
 
     /* 右欄：整個畫面都不動了，sticky 沒有意義也沒有作用（它需要一個會捲的祖先）。
        視窗變矮時讓步的是預覽——備註與翻頁列是固定高度的，而且都是不能被切掉的東西。 */
@@ -371,7 +390,9 @@
      展開狀態的 .flow-item 會用 overflow:hidden ＋ 外框把它吃掉（線消失），而且
      上下間距會變成兩種——上面是 ::after 的 margin 8px，下面是 grid gap 6px。
      當成格子畫就兩邊都吃 gap，永遠對稱，也永遠不會被誰蓋住。 */
-  .flow-divider { height: 1px; background: var(--line); }
+  /* 界線兩側比一般列距再開一點：情境設定管的是「這一整組」，底下管的是「這一頁」，
+     那是一次層級的切換，不是下一列。margin 兩邊一樣，加上 gap 後上下各 14px。 */
+  .flow-divider { height: 1px; background: var(--line); margin: 8px 0; }
   .edit-action {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px;
     padding: 9px 11px; border-radius: 8px;
@@ -2217,9 +2238,13 @@ function buildSplitter(doc, screen) {
     document.addEventListener('mouseup', stop);
   });
   bar.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    // **一定要擋下冒泡。** 方向鍵在全域是「翻頁」，焦點停在這條 bar 上時同一顆鍵
+    // 會先調寬度、再翻一頁——畫面同時跳兩下，而使用者說不出是哪一件出了問題。
+    e.stopPropagation();
     const step = e.shiftKey ? 5 : 2;
-    if (e.key === 'ArrowLeft') { e.preventDefault(); applySplit(splitPercent - step, screen); }
-    if (e.key === 'ArrowRight') { e.preventDefault(); applySplit(splitPercent + step, screen); }
+    applySplit(splitPercent + (e.key === 'ArrowLeft' ? -step : step), screen);
   });
   return bar;
 }
@@ -3163,13 +3188,24 @@ function stopAll() {
 
 // ---------- 快捷鍵 ----------
 // 教官的手不會固定在某一個視窗上，所以主視窗與投影視窗都要掛一份。
-// 焦點在表單元件上時一律放行——不然使用者在調滑桿或選單，按方向鍵卻跳了頁。
-const FORM_TAGS = ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'OPTION'];
+// 焦點在會打字／有自己左右語意的元件上時放行——不然使用者在調滑桿或選單，
+// 按方向鍵卻跳了頁。
+const TYPING_TAGS = ['INPUT', 'SELECT', 'TEXTAREA', 'OPTION'];
+
+// **BUTTON 刻意不在上面那張表裡。** 按鈕沒有左右語意，擋掉方向鍵的唯一效果是：
+// 用滑鼠點過「下一頁」「＋ 新增頁」之後，焦點留在那顆按鈕上，方向鍵就整個失效——
+// 而焦點是看不見的，所以那看起來就是「方向鍵壞了」。
+// 但**空白鍵要留給按鈕本身**：那是它的啟動鍵，拿去翻頁的話按鈕就按不動了。
+function flowKeyBlocked(target, key) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  if (TYPING_TAGS.includes(target.tagName)) return true;
+  return target.tagName === 'BUTTON' && (key === ' ' || key === 'Spacebar');
+}
 
 function handleFlowKey(e) {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  const tag = e.target && e.target.tagName;
-  if (FORM_TAGS.includes(tag) || (e.target && e.target.isContentEditable)) return;
+  if (flowKeyBlocked(e.target, e.key)) return;
 
   switch (e.key) {
     case 'ArrowRight': case 'PageDown': case ' ': case 'Spacebar':
