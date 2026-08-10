@@ -50,7 +50,11 @@
      replaceChildren 都會把它連根銷毀，下一次 getElementById 就是 null——踩過。 */
   body.editing header > :not(.status-line) { display: none; }
   body.editing header { margin: 0; }
-  body.editing .status-line { margin: 0 0 10px; }
+  /* 但**只留錯誤**。成功的事情畫面上看得出來：匯出會下載一個檔、複製會直接跳到
+     複本、改 id 欄位自己就變了。常駐一行「素材庫已載入：34 筆」只是把上一個畫面的
+     訊息帶進來佔位置。看不出來的是「這件事沒做成、原因是什麼」，那才需要文字。 */
+  body.editing .status-line:not(.error) { display: none; }
+  body.editing .status-line.error { margin: 0 0 10px; }
   body.editing .workspace { grid-template-columns: minmax(0, 1fr); margin-top: 0; }
   body.editing .workspace-main { margin-top: 0; }
   /* 編輯畫面自己有一條頂欄，所以外框不需要再留一圈圓角與邊界 */
@@ -92,6 +96,15 @@
     /* 左欄：頂部（‹ 回到情境、情境名稱、第 N/M 步）釘住，只有頁清單捲 */
     body.editing .edit-main { display: flex; flex-direction: column; min-height: 0; }
     body.editing .flow-head { flex: none; }
+    /* **bar 兩側看起來一樣寬，靠的是這三行。**
+       .edit-main 的 padding-right:14px 是為了讓左欄與 bar 之間留白，但左欄的清單
+       底下還永遠留著一條捲軸槽（scrollbar-gutter:stable ＋ padding-right:4px），
+       於是卡片右緣離 bar 是 14+15=29px，而右邊只有 14px——**左邊看起來寬一倍**，
+       而且捲軸沒出現時那 15px 是一塊純空白，沒有任何東西解釋它為什麼在那裡。
+       所以左欄自己不再留 padding，改由捲軸槽當那份間距；頂欄沒有捲軸槽，
+       手動補上一樣的寬度，才能跟底下的卡片右緣切齊。 */
+    body.editing .edit-main { padding-right: 0; }
+    body.editing .flow-head { padding-right: 15px; }
     body.editing .edit-main .flow-list {
       flex: 1; min-height: 0; overflow-y: auto;
       padding-right: 4px;          /* 捲軸不要壓在列的右邊界上 */
