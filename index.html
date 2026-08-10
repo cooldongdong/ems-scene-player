@@ -391,8 +391,6 @@
     margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
   }
   .settings-actions button { font-size: 13px; padding: 6px 12px; }
-  /* id 會變成檔名，改它不是換標籤——這行字就是在講這件事，不能省 */
-  .settings-hint { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
   /* 與底下的頁之間留一條界線：它不是第 0 頁。
      **這條線是 .flow-list 自己的一格，不是設定列的 ::after。** 畫在設定列裡面時，
      展開狀態的 .flow-item 會用 overflow:hidden ＋ 外框把它吃掉（線消失），而且
@@ -1487,12 +1485,6 @@ function buildScenarioSettingsRow(doc) {
       field.append(Object.assign(doc.createElement('span'), { textContent: label }), sel);
       inner.appendChild(field);
     }
-    // 講清楚 id 會流到哪裡去。不寫的話，改它看起來只是換個標籤
-    inner.appendChild(Object.assign(doc.createElement('p'), {
-      className: 'settings-hint',
-      textContent: `匯出與送 PR 的檔名都會是 ${currentScenario.id}.yaml。`
-        + '只能用小寫英數字與連字號，換掉它等於變成另一個情境。',
-    }));
 
     // 整個情境的操作住在這裡。**受詞不必寫出來**——在情境設定的面板裡，
     // 「匯出」不會被讀成匯出這一頁。原本它們排在「＋ 新增頁」旁邊，
