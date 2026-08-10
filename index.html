@@ -385,6 +385,12 @@
   .settings-row { gap: 10px; }
   .settings-gear { flex: none; color: var(--muted); font-size: 14px; line-height: 1; }
   .settings-row:hover .settings-gear { color: var(--accent); }
+  /* 整個情境的操作（匯出／貢獻／刪除）。用一條線跟上面的環境×急救事件隔開：
+     上面是「這個情境是什麼」，下面是「拿這個情境做什麼」，同一個面板裡的兩件事。 */
+  .settings-actions {
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+  }
+  .settings-actions button { font-size: 13px; padding: 6px 12px; }
   /* 與底下的頁之間留一條界線：它不是第 0 頁。
      **這條線是 .flow-list 自己的一格，不是設定列的 ::after。** 畫在設定列裡面時，
      展開狀態的 .flow-item 會用 overflow:hidden ＋ 外框把它吃掉（線消失），而且
@@ -1418,6 +1424,28 @@ function buildScenarioSettingsRow(doc) {
       field.append(Object.assign(doc.createElement('span'), { textContent: label }), sel);
       inner.appendChild(field);
     }
+
+    // 整個情境的操作住在這裡。**受詞不必寫出來**——在情境設定的面板裡，
+    // 「匯出」不會被讀成匯出這一頁。原本它們排在「＋ 新增頁」旁邊，
+    // 才需要靠「這個情境」四個字澄清自己在對誰動手。
+    const actions = doc.createElement('div');
+    actions.className = 'flow-actions settings-actions';
+    actions.append(
+      flowButton(doc, '匯出', exportCurrentScenario),
+      flowButton(doc, '貢獻', contributeCurrentScenario),
+    );
+    // 內建情境來自 scenarios/，刪不掉也不該刪——這顆只給存在本機的自訂情境
+    if (currentScenario.source !== 'builtin') {
+      const del = flowButton(doc, '刪除', () => {
+        if (confirm(`確定刪除情境「${currentScenario.name}」？這會從本機移除，無法復原。`)) {
+          deleteScenario(currentScenario);
+        }
+      });
+      del.className += ' danger';
+      actions.appendChild(del);
+    }
+    inner.appendChild(actions);
+
     body.appendChild(inner);
     item.appendChild(body);
   }
@@ -2527,21 +2555,9 @@ function buildFlowPanel(doc, preview) {
 
   const addBar = doc.createElement('div');
   addBar.className = 'flow-actions';
-  addBar.append(
-    flowButton(doc, '＋ 新增頁', addSlide),
-    flowButton(doc, '匯出這個情境', exportCurrentScenario),
-    flowButton(doc, '貢獻這個情境', contributeCurrentScenario),
-  );
-  // 內建情境來自 scenarios/，刪不掉也不該刪——這顆只給存在本機的自訂情境
-  if (currentScenario.source !== 'builtin') {
-    const del = flowButton(doc, '刪除這個情境', () => {
-      if (confirm(`確定刪除情境「${currentScenario.name}」？這會從本機移除，無法復原。`)) {
-        deleteScenario(currentScenario);
-      }
-    });
-    del.className += ' danger';
-    addBar.appendChild(del);
-  }
+  // 這一列只放管「頁」的東西。整個情境的操作（匯出／貢獻／刪除）在情境設定裡——
+  // 尺度不同的東西擠在同一列，按鈕就得靠「這個情境」四個字去補位置補不出來的語意。
+  addBar.append(flowButton(doc, '＋ 新增頁', addSlide));
   left.appendChild(addBar);
 
   // 右欄：預覽固定在視窗上緣，捲到第 8 頁時它還在
