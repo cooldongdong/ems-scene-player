@@ -459,16 +459,36 @@
   // 那個編輯器**一次只能新增一個檔**，這正是情境必須拆成 scenarios/ 的原因（COO-84）：
   // 貢獻＝新增一個檔，中途不必碰 index、不必懂 branch。
 
+  /** 情境檔在 repo 裡的路徑。匯出、送 PR、index.yaml 共用同一條規則 */
+  function scenarioPath(id) {
+    return `scenarios/${id}.yaml`;
+  }
+
   /**
-   * GitHub「新增檔案」的預填網址。檔名與內容都塞在 query 裡。
+   * GitHub 預填網址。內容都塞在 query 的 value 裡，差別只在動詞：
+   *
+   *   new   `/new/{branch}?filename=…&value=…`        新增一個檔
+   *   edit  `/edit/{branch}/{path}?value=…`           改一個已經存在的檔
+   *
+   * **兩者的差別對貢獻者是天差地別的**：走 new 送出的是「新增 contrib-xxx.yaml」，
+   * review 的人要自己比對它跟哪一個情境九成像；走 edit 送出的是那個檔的 diff，
+   * 一眼就看得出改了哪一句台詞、哪一頁被關掉。
+   *
+   * 選哪一個不需要問使用者——**他改的是不是既有情境，資料裡就寫著**（source）。
+   *
+   * @param mode 'new'（預設）或 'edit'
    * @param dump 由呼叫端注入的 jsyaml.dump
    */
-  function contributionUrl(scenario, { repo, branch = 'main', dump }) {
+  function contributionUrl(scenario, { repo, branch = 'main', dump, mode = 'new' }) {
     const text = exportScenarioYaml(scenario, dump);
-    const filename = `scenarios/${scenario.id}.yaml`;
-    return `https://github.com/${repo}/new/${encodeURIComponent(branch)}`
-      + `?filename=${encodeURIComponent(filename)}`
-      + `&value=${encodeURIComponent(text)}`;
+    const path = scenarioPath(scenario.id);
+    const value = `value=${encodeURIComponent(text)}`;
+    const at = encodeURIComponent(branch);
+    // 路徑在 /edit/ 是網址的一部分，斜線要留著當分隔，只 encode 各段
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    return mode === 'edit'
+      ? `https://github.com/${repo}/edit/${at}/${encodedPath}?${value}`
+      : `https://github.com/${repo}/new/${at}?filename=${encodeURIComponent(path)}&${value}`;
   }
 
   // ---------- actions 模型 → 圖層模型 ----------
@@ -715,6 +735,7 @@
     parseImport,
     scenarioIdProblem,
     copyScenarioId,
+    scenarioPath,
     contributionUrl,
     migrateScenario,
     migrateScenarios,

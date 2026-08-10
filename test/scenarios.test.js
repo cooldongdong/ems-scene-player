@@ -564,6 +564,32 @@ test('貢獻網址帶的檔名就是情境的 id，內容解回來就是那個�
   assert.deepEqual(back.scenarios[0].slides, scenario.slides);
 });
 
+// 送「修正」時走 /edit/{branch}/{path}，網址裡是那個檔的路徑，不再帶 filename。
+// 這條的意義不是網址長相，是 review 端看到的東西：new 是「多一個檔」，
+// edit 是「那個檔的 diff」——一眼看得出改了哪一句台詞。
+test('修正模式的網址指向既有的那個檔，內容一樣解得回來', () => {
+  const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  const url = S.contributionUrl(scenarios[0],
+    { repo: 'cooldongdong/ems-scene-player', branch: 'main', dump: yaml.dump, mode: 'edit' });
+
+  const parsed = new URL(url);
+  assert.equal(parsed.pathname,
+    `/cooldongdong/ems-scene-player/edit/main/${S.scenarioPath(scenarios[0].id)}`);
+  assert.equal(parsed.searchParams.get('filename'), null, 'edit 不該帶 filename');
+
+  const back = S.parseImport(parsed.searchParams.get('value'), OPTIONS, yaml.load);
+  assert.equal(back.ok, true);
+  assert.deepEqual(back.warnings, []);
+  assert.equal(back.scenarios[0].id, scenarios[0].id);
+});
+
+test('路徑規則只有一份：scenarioPath 決定匯出、送 PR、index 用的檔名', () => {
+  assert.equal(S.scenarioPath('home-ohca'), 'scenarios/home-ohca.yaml');
+  for (const { file, scenario } of SCENARIO_FILES) {
+    assert.equal(S.scenarioPath(scenario.id), `scenarios/${file}`);
+  }
+});
+
 // 網址長度是這條路唯一的硬限制。內建裡最長的是 5 頁的路口車禍，實測約 2500 字元；
 // 這條測試盯的是「別讓某次改動讓匯出突然變得很肥」，不是盯 GitHub 的上限。
 test('內建情境的貢獻網址都遠低於長度上限', () => {
