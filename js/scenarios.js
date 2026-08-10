@@ -460,26 +460,6 @@
   // 貢獻＝新增一個檔，中途不必碰 index、不必懂 branch。
 
   /**
-   * 貢獻用的 id。**一律配新的，不沿用本機那一個。**
-   *
-   * 本機 id 只在這台電腦裡唯一——新情境一律叫 custom-1、custom-2……，兩個教官各自貢獻
-   * 就會撞成同一個檔名；複製自內建的情境更直接，它的 id 就是內建那一筆，送出去等於
-   * 要覆蓋別人的檔。日期讓 review 的人一眼看得出新舊，隨機碼負責唯一。
-   *
-   * @param now 注入時間，測試才能釘住輸出
-   * @param rand 注入亂數來源（回傳 0~1）
-   */
-  function contributionId(now, rand) {
-    const d = now || new Date();
-    const day = String(d.getFullYear())
-      + String(d.getMonth() + 1).padStart(2, '0')
-      + String(d.getDate()).padStart(2, '0');
-    const r = (rand || Math.random)();
-    const tail = Math.floor(r * 36 ** 4).toString(36).padStart(4, '0');
-    return `contrib-${day}-${tail}`;
-  }
-
-  /**
    * GitHub「新增檔案」的預填網址。檔名與內容都塞在 query 裡。
    * @param dump 由呼叫端注入的 jsyaml.dump
    */
@@ -735,7 +715,6 @@
     parseImport,
     scenarioIdProblem,
     copyScenarioId,
-    contributionId,
     contributionUrl,
     migrateScenario,
     migrateScenarios,

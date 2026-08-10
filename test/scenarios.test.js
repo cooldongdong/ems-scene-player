@@ -521,7 +521,7 @@ test('id 只收小寫英數字與連字號，且要以英文字母開頭', () =>
   for (const bad of ['住宅', 'Home-OHCA', 'home ohca', 'home/ohca', '1-home', '-home', 'home_ohca']) {
     assert.ok(S.scenarioIdProblem(bad, []), `「${bad}」應該被擋下來`);
   }
-  for (const ok of ['home-ohca', 'a', 'a1', 'contrib-20260810-abcd']) {
+  for (const ok of ['home-ohca', 'a', 'a1', 'street-trauma-copy']) {
     assert.equal(S.scenarioIdProblem(ok, []), null, `「${ok}」應該放行`);
   }
 });
@@ -545,36 +545,22 @@ test('複製出來的 id 自己也通得過 id 驗證', () => {
 
 // ---------- 貢獻（COO-86）----------
 
-test('貢獻 id 是 contrib-日期-亂數，且符合 id 規則（ASCII kebab-case）', () => {
-  const id = S.contributionId(new Date(2026, 7, 10), () => 0.5);
-  assert.match(id, /^contrib-20260810-[0-9a-z]{4}$/);
-  assert.match(id, /^[a-z][a-z0-9-]*$/);
-});
-
-// 兩個教官各自貢獻不能撞成同一個檔名——本機 id 一律是 custom-1、custom-2，撞定了，
-// 所以貢獻時一定要換一個。這條測的就是「真的換得開」。
-test('貢獻 id 會隨亂數改變，不會兩個人撞同一個檔名', () => {
-  const day = new Date(2026, 7, 10);
-  const a = S.contributionId(day, () => 0.1);
-  const b = S.contributionId(day, () => 0.9);
-  assert.notEqual(a, b);
-});
-
-test('貢獻網址帶的檔名用貢獻 id，內容解回來就是那個情境', () => {
+// 檔名就是情境的 id，不另外生一個——編輯畫面寫著什麼，送出去就該是什麼
+test('貢獻網址帶的檔名就是情境的 id，內容解回來就是那個情境', () => {
   const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
-  const scenario = { ...scenarios[0], id: 'contrib-20260810-abcd' };
+  const scenario = { ...scenarios[0], id: 'street-trauma-copy' };
   const url = S.contributionUrl(scenario,
     { repo: 'cooldongdong/ems-scene-player', branch: 'main', dump: yaml.dump });
 
   const parsed = new URL(url);
   assert.equal(parsed.origin + parsed.pathname, 'https://github.com/cooldongdong/ems-scene-player/new/main');
-  assert.equal(parsed.searchParams.get('filename'), 'scenarios/contrib-20260810-abcd.yaml');
+  assert.equal(parsed.searchParams.get('filename'), 'scenarios/street-trauma-copy.yaml');
 
   const back = S.parseImport(parsed.searchParams.get('value'), OPTIONS, yaml.load);
   assert.equal(back.ok, true);
   assert.deepEqual(back.warnings, []);
   assert.equal(back.scenarios.length, 1);
-  assert.equal(back.scenarios[0].id, 'contrib-20260810-abcd');
+  assert.equal(back.scenarios[0].id, 'street-trauma-copy');
   assert.deepEqual(back.scenarios[0].slides, scenario.slides);
 });
 

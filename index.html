@@ -813,7 +813,7 @@ function setStatus(msg, isError) {
 // 於是新資料配舊程式，錯誤訊息還會指向完全無關的地方。
 const REQUIRED_SCENARIO_API = [
   'normalizeScenarios', 'mergeScenarios', 'forExport', 'complicationsOf', 'playableSlides',
-  'exportScenarioYaml', 'parseImport', 'contributionId', 'contributionUrl',
+  'exportScenarioYaml', 'parseImport', 'contributionUrl',
   'scenarioIdProblem', 'copyScenarioId',
   'segmentOf', 'complicationSegments', 'eligibleAssets',
   'availableComplications', 'baseCoverage',
@@ -1525,12 +1525,12 @@ function buildScenarioSettingsRow(doc) {
       blocked.title = `還不能貢獻：${problem}`;
       actions.appendChild(blocked);
     } else {
+      // 成功時不留訊息：點連結會開一個新分頁，那個分頁自己就是回饋。
+      // 再補一句「已開啟…」是在講使用者眼前正在發生的事
       const target = contributionTarget(currentScenario);
       actions.appendChild(target.tooLong
         ? flowButton(doc, '貢獻', () => downloadForContribution(target))
-        : flowLink(doc, '貢獻', target.url, () => setStatus(
-            `已開啟 GitHub 貢獻頁（${target.scenario.id}.yaml）——`
-            + '捲到最下面按 "Propose new file" 就會送出 PR，不會動到別人的東西。')));
+        : flowLink(doc, '貢獻', target.url));
     }
     // 內建情境來自 scenarios/，刪不掉也不該刪——這顆只給存在本機的自訂情境
     if (currentScenario.source !== 'builtin') {
@@ -1593,6 +1593,15 @@ const CONTRIB_URL_LIMIT = 6000;
 // 貢獻進來的情境**只是素材的引用**。用了這個環境×急救事件下不存在的素材，別人載入時
 // 只會靜靜地少一段——沒有錯誤訊息、沒有紅字。所以擋在送出前，而不是等 review 才發現。
 function contributionProblem(scenario) {
+  // 送出去會蓋掉 scenarios/ 裡已經存在的檔。source 不是 custom，就代表這個 id
+  // 對應到一個內建情境——也就是 repo 裡真的有那個檔。
+  // 「修正既有情境」是另一條路（要走 GitHub 的 /edit/），還沒做，所以先擋。
+  const clash = activeScenarios.find(s => s.id === scenario.id && s.source !== 'custom');
+  if (clash) {
+    return `id「${scenario.id}」是內建情境「${clash.name}」的檔名，送出去會蓋掉它`
+      + '。上面改一個新的 id，這樣才會是「新增一個情境」';
+  }
+
   const broken = scenarioBrokenComplications(scenario);
   if (broken.length) {
     return `「${scenario.environment}／${scenario.medicalEvent}」下沒有這些突發狀況的素材：${broken.join('、')}`;
@@ -1604,13 +1613,17 @@ function contributionProblem(scenario) {
   return null;
 }
 
-// 貢獻用的一次性情境（換上 contrib- 的 id）＋ 它的網址。
-// 在 render 時算好，所以「能不能貢獻」在畫面上就看得出來，不必等他點下去才拒絕。
+// 貢獻的目標檔與網址。在 render 時算好，所以「能不能貢獻」在畫面上就看得出來，
+// 不必等他點下去才拒絕。
+//
+// **檔名就是這個情境的 id，不再另外生一個。** 曾經在這裡塞一個隨機的 contrib-日期-亂數，
+// 理由是「本機 id 一律叫 custom-1，兩個人各自貢獻會撞」——但那是在 id 還改不動的時候。
+// 現在 id 由人自己取、而且驗證會擋掉撞名，出口就不該再偷換一個他沒見過的名字：
+// 編輯畫面寫著 street-trauma-copy，送出去卻叫 contrib-20260810-cjzr，那是兩個東西。
 function contributionTarget(scenario) {
-  const withId = { ...scenario, id: Scenarios.contributionId() };
-  const url = Scenarios.contributionUrl(withId,
+  const url = Scenarios.contributionUrl(scenario,
     { repo: CONTRIB_REPO, branch: CONTRIB_BRANCH, dump: jsyaml.dump });
-  return { scenario: withId, url, tooLong: url.length > CONTRIB_URL_LIMIT };
+  return { scenario, url, tooLong: url.length > CONTRIB_URL_LIMIT };
 }
 
 // 網址塞不下時的退路：下載檔案，讓人自己放進 scenarios/。
