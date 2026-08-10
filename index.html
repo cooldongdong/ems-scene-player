@@ -415,6 +415,8 @@
   .settings-actions button, .settings-actions .flow-btn { font-size: 13px; padding: 6px 12px; }
   /* 只在「這個情境還不能貢獻」時才出現，所以不是常駐說明，是當下的理由 */
   .settings-note { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: #ff8f6b; }
+  /* 同一個位置，但這一則不是「出事了」，是「你還有一步要做」 */
+  .settings-note-plain { color: var(--muted); flex-basis: 100%; }
   /* 連結版的按鈕：<a> 沒有 button 的預設樣式，這裡把它補齊 */
   a.flow-btn {
     display: inline-block; text-decoration: none; line-height: normal;
@@ -1532,6 +1534,7 @@ function buildScenarioSettingsRow(doc) {
 
     // 貢獻。把關在這裡跑而不是等他點下去——**不能用的東西該長得像不能用**，
     // 而不是點了以後被一句話拒絕。
+    let note = null;
     const problem = contributionProblem(currentScenario);
     if (problem) {
       const blocked = flowButton(doc, '貢獻', () => {}, { disabled: true });
@@ -1543,13 +1546,25 @@ function buildScenarioSettingsRow(doc) {
       const target = contributionTarget(currentScenario);
       const link = target.tooLong
         ? flowButton(doc, '貢獻', () => downloadForContribution(target))
-        : flowLink(doc, '貢獻', target.url);
+        // 修正模式塞不進預填（GitHub 忽略 /edit/ 的 ?value=），所以點下去時
+        // 把新內容送進剪貼簿，讓人到那一頁貼上
+        : flowLink(doc, '貢獻', target.url,
+            target.mode === 'edit' ? () => copyScenarioToClipboard(target.scenario) : null);
       // 送出去會發生什麼，滑過去就知道——「修正」與「新增」是兩件很不一樣的事，
       // 但按鈕上寫不下，寫下去也會變成第二種說法
       link.title = target.mode === 'edit'
         ? `送出 ${Scenarios.scenarioPath(target.scenario.id)} 的修正`
         : `新增 ${Scenarios.scenarioPath(target.scenario.id)}`;
       actions.appendChild(link);
+      // **這一行是流程的一部分，不是說明。** 沒有它，使用者會開到一個看起來
+      // 沒變的檔案，完全不知道自己還有一步要做。
+      // 放在按鈕列外面：塞進去會把後面的「刪除」擠到下一行
+      if (target.mode === 'edit') {
+        note = Object.assign(doc.createElement('p'), {
+          className: 'settings-note settings-note-plain',
+          textContent: '「貢獻」會複製這個情境的新內容並開啟 GitHub 的編輯頁——到那邊全選貼上再送出。',
+        });
+      }
     }
     // 內建情境來自 scenarios/，刪不掉也不該刪——這顆只給存在本機的自訂情境
     if (currentScenario.source !== 'builtin') {
@@ -1569,6 +1584,8 @@ function buildScenarioSettingsRow(doc) {
         className: 'settings-note',
         textContent: `還不能貢獻：${problem}`,
       }));
+    } else if (note) {
+      inner.appendChild(note);
     }
 
     body.appendChild(inner);
@@ -1649,6 +1666,24 @@ function contributionTarget(scenario) {
   const url = Scenarios.contributionUrl(scenario,
     { repo: CONTRIB_REPO, branch: CONTRIB_BRANCH, dump: jsyaml.dump, mode });
   return { scenario, url, mode, tooLong: url.length > CONTRIB_URL_LIMIT };
+}
+
+// 修正模式沒有預填（GitHub 忽略 /edit/ 的 ?value=，2026-08-10 實測），
+// 所以在開啟編輯頁的同一下把新內容放進剪貼簿。**這不是貼心，是這條路能不能走的關鍵**：
+// 沒有它，使用者會開到一個看起來完全沒變的檔案。
+function copyScenarioToClipboard(scenario) {
+  const text = Scenarios.exportScenarioYaml(scenario, jsyaml.dump);
+  if (!navigator.clipboard) {
+    // 複製不了就退回下載，至少內容拿得到——比開一個空手的編輯頁好
+    downloadScenario(scenario);
+    setStatus('這個瀏覽器不給複製到剪貼簿，已改成下載檔案——'
+      + '到 GitHub 那一頁把檔案內容貼上去。', true);
+    return;
+  }
+  navigator.clipboard.writeText(text).catch(err => {
+    downloadScenario(scenario);
+    setStatus('複製到剪貼簿失敗（' + err.message + '），已改成下載檔案。', true);
+  });
 }
 
 // 網址塞不下時的退路：下載檔案，讓人自己放進 scenarios/。

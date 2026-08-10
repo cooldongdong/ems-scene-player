@@ -465,30 +465,37 @@
   }
 
   /**
-   * GitHub 預填網址。內容都塞在 query 的 value 裡，差別只在動詞：
+   * GitHub 的網頁編輯器網址。兩種動詞，**但只有一種吃得下預填**：
    *
-   *   new   `/new/{branch}?filename=…&value=…`        新增一個檔
-   *   edit  `/edit/{branch}/{path}?value=…`           改一個已經存在的檔
+   *   new   `/new/{branch}?filename=…&value=…`   新增一個檔。**預填成立**（2026-08-10 實測）
+   *   edit  `/edit/{branch}/{path}`              改既有的檔。**`?value=` 無效**——
+   *                                              2026-08-10 實測 `/edit/main/dev.md?value=X`
+   *                                              開出來仍是原本的 dev.md，參數被忽略
    *
-   * **兩者的差別對貢獻者是天差地別的**：走 new 送出的是「新增 contrib-xxx.yaml」，
-   * review 的人要自己比對它跟哪一個情境九成像；走 edit 送出的是那個檔的 diff，
-   * 一眼就看得出改了哪一句台詞、哪一頁被關掉。
+   * 所以修正那條路沒辦法把內容塞進網址，只能把內容放進剪貼簿、讓人到那邊貼上。
+   * 呼叫端要負責複製，不然使用者會對著原檔一頭霧水（見 index.html 的 contributeFix）。
    *
-   * 選哪一個不需要問使用者——**他改的是不是既有情境，資料裡就寫著**（source）。
+   * 為什麼不乾脆兩種都走 new：`/new/` 指向一個已經存在的路徑，GitHub 會在送出時
+   * 擋下來說「這個檔名已經存在」——那比多貼一次更糟，因為錯誤發生在最後一步。
+   *
+   * 走哪一種不需要問使用者——**他改的是不是既有情境，資料裡就寫著**（source）。
+   * review 端的差別才是重點：new 送出的是「多一個檔」，review 的人得自己比對它跟
+   * 哪一個情境九成像；edit 送出的是那個檔的 diff，一眼看得出改了哪一句台詞。
    *
    * @param mode 'new'（預設）或 'edit'
-   * @param dump 由呼叫端注入的 jsyaml.dump
+   * @param dump 由呼叫端注入的 jsyaml.dump（mode 為 edit 時用不到）
    */
   function contributionUrl(scenario, { repo, branch = 'main', dump, mode = 'new' }) {
-    const text = exportScenarioYaml(scenario, dump);
     const path = scenarioPath(scenario.id);
-    const value = `value=${encodeURIComponent(text)}`;
     const at = encodeURIComponent(branch);
-    // 路徑在 /edit/ 是網址的一部分，斜線要留著當分隔，只 encode 各段
-    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
-    return mode === 'edit'
-      ? `https://github.com/${repo}/edit/${at}/${encodedPath}?${value}`
-      : `https://github.com/${repo}/new/${at}?filename=${encodeURIComponent(path)}&${value}`;
+    if (mode === 'edit') {
+      // 路徑是網址的一部分，斜線要留著當分隔，只 encode 各段
+      const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+      return `https://github.com/${repo}/edit/${at}/${encodedPath}`;
+    }
+    return `https://github.com/${repo}/new/${at}`
+      + `?filename=${encodeURIComponent(path)}`
+      + `&value=${encodeURIComponent(exportScenarioYaml(scenario, dump))}`;
   }
 
   // ---------- actions 模型 → 圖層模型 ----------

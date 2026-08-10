@@ -564,10 +564,10 @@ test('貢獻網址帶的檔名就是情境的 id，內容解回來就是那個�
   assert.deepEqual(back.scenarios[0].slides, scenario.slides);
 });
 
-// 送「修正」時走 /edit/{branch}/{path}，網址裡是那個檔的路徑，不再帶 filename。
-// 這條的意義不是網址長相，是 review 端看到的東西：new 是「多一個檔」，
-// edit 是「那個檔的 diff」——一眼看得出改了哪一句台詞。
-test('修正模式的網址指向既有的那個檔，內容一樣解得回來', () => {
+// 送「修正」時走 /edit/{branch}/{path}。**不帶 value**——2026-08-10 實測 GitHub
+// 忽略 /edit/ 的 ?value=（開 /edit/main/dev.md?value=X 出來仍是原本的 dev.md）。
+// 內容改由呼叫端放進剪貼簿，所以這裡多塞一個參數只會讓人以為預填成立。
+test('修正模式的網址指向既有的那個檔，而且不帶任何預填參數', () => {
   const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
   const url = S.contributionUrl(scenarios[0],
     { repo: 'cooldongdong/ems-scene-player', branch: 'main', dump: yaml.dump, mode: 'edit' });
@@ -575,12 +575,7 @@ test('修正模式的網址指向既有的那個檔，內容一樣解得回來',
   const parsed = new URL(url);
   assert.equal(parsed.pathname,
     `/cooldongdong/ems-scene-player/edit/main/${S.scenarioPath(scenarios[0].id)}`);
-  assert.equal(parsed.searchParams.get('filename'), null, 'edit 不該帶 filename');
-
-  const back = S.parseImport(parsed.searchParams.get('value'), OPTIONS, yaml.load);
-  assert.equal(back.ok, true);
-  assert.deepEqual(back.warnings, []);
-  assert.equal(back.scenarios[0].id, scenarios[0].id);
+  assert.equal(parsed.search, '', 'edit 不該帶參數——GitHub 不吃，帶了只會騙自己');
 });
 
 test('路徑規則只有一份：scenarioPath 決定匯出、送 PR、index 用的檔名', () => {
