@@ -363,11 +363,29 @@
   }
 
   /**
-   * 匯出成可直接貼回 scenario-data.yaml 的文字。
+   * 匯出**一個**情境，成為可以直接放進 scenarios/ 的檔案內容。
+   *
+   * 為什麼是單一情境而不是整包：匯出檔要能被 review、能被 PR 進來（COO-86），
+   * 而「一個檔一個情境」讓這件事變成「新增一個檔」。整包匯出的話，貢獻者送出的是
+   * 一份包含別人情境的大檔，diff 全是雜訊，沒有人 review 得動。
+   *
+   * 所以這裡**不包 `scenarios:` 那一層**——檔案的內容就是情境本身，
+   * 跟 scenarios/ 裡的檔一模一樣，貼進去就能用。
+   *
    * @param dump 由呼叫端注入的 jsyaml.dump，這一層不綁任何 yaml 實作
    */
-  function exportYaml(scenarios, dump) {
-    return dump({ scenarios: forExport(scenarios) }, { lineWidth: -1, noRefs: true });
+  function exportScenarioYaml(scenario, dump) {
+    return dump(forExport([scenario])[0], { lineWidth: -1, noRefs: true });
+  }
+
+  // 匯入時能接受的三種形狀。單一情境是現在匯出的形狀，另外兩種是為了讓舊的匯出檔
+  // 與手貼的 scenario-data.yaml 片段還進得來——匯入是別人給你的檔，不能只認自己寫的格式。
+  function importCandidates(data) {
+    if (Array.isArray(data)) return data;
+    if (!isObject(data)) return null;
+    if (Array.isArray(data.scenarios)) return data.scenarios;
+    if (data.slides !== undefined) return [data];
+    return null;
   }
 
   /**
@@ -382,13 +400,57 @@
     } catch (err) {
       return { scenarios: [], warnings: [`檔案解析失敗：${err.message}`], ok: false };
     }
-    // 接受 { scenarios: [...] } 或直接一個陣列
-    const raw = Array.isArray(data) ? data : (isObject(data) ? data.scenarios : null);
+    const raw = importCandidates(data);
     if (!raw) {
-      return { scenarios: [], warnings: ['檔案裡找不到 scenarios 陣列'], ok: false };
+      return {
+        scenarios: [],
+        warnings: ['檔案裡找不到情境（要嘛是單一個情境，要嘛是 scenarios 陣列）'],
+        ok: false,
+      };
     }
     const result = normalizeScenarios(raw, options);
     return { ...result, ok: true };
+  }
+
+  // ---------- 貢獻（送 PR）----------
+  // COO-86：讓不會 git 的教官把編好的情境送成 PR。走 GitHub 的「新增檔案」預填網址，
+  // 開過去就是一個內容已經填好的網頁編輯器，按 "Propose new file" 就送出 PR——
+  // 不需要 OAuth、不需要後端。（真正的替代方案 OAuth + GitHub API 要 client secret，
+  // 靜態網站放不了，所以這是唯一走得通的路。）
+  //
+  // 那個編輯器**一次只能新增一個檔**，這正是情境必須拆成 scenarios/ 的原因（COO-84）：
+  // 貢獻＝新增一個檔，中途不必碰 index、不必懂 branch。
+
+  /**
+   * 貢獻用的 id。**一律配新的，不沿用本機那一個。**
+   *
+   * 本機 id 只在這台電腦裡唯一——新情境一律叫 custom-1、custom-2……，兩個教官各自貢獻
+   * 就會撞成同一個檔名；複製自內建的情境更直接，它的 id 就是內建那一筆，送出去等於
+   * 要覆蓋別人的檔。日期讓 review 的人一眼看得出新舊，隨機碼負責唯一。
+   *
+   * @param now 注入時間，測試才能釘住輸出
+   * @param rand 注入亂數來源（回傳 0~1）
+   */
+  function contributionId(now, rand) {
+    const d = now || new Date();
+    const day = String(d.getFullYear())
+      + String(d.getMonth() + 1).padStart(2, '0')
+      + String(d.getDate()).padStart(2, '0');
+    const r = (rand || Math.random)();
+    const tail = Math.floor(r * 36 ** 4).toString(36).padStart(4, '0');
+    return `contrib-${day}-${tail}`;
+  }
+
+  /**
+   * GitHub「新增檔案」的預填網址。檔名與內容都塞在 query 裡。
+   * @param dump 由呼叫端注入的 jsyaml.dump
+   */
+  function contributionUrl(scenario, { repo, branch = 'main', dump }) {
+    const text = exportScenarioYaml(scenario, dump);
+    const filename = `scenarios/${scenario.id}.yaml`;
+    return `https://github.com/${repo}/new/${encodeURIComponent(branch)}`
+      + `?filename=${encodeURIComponent(filename)}`
+      + `&value=${encodeURIComponent(text)}`;
   }
 
   // ---------- actions 模型 → 圖層模型 ----------
@@ -631,8 +693,10 @@
     normalizeScenarios,
     mergeScenarios,
     forExport,
-    exportYaml,
+    exportScenarioYaml,
     parseImport,
+    contributionId,
+    contributionUrl,
     migrateScenario,
     migrateScenarios,
   };

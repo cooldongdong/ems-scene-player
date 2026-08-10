@@ -1,0 +1,55 @@
+# 重新產生 scenarios/index.yaml
+#
+# 為什麼要有這支 workflow：
+#
+# 純靜態網站列不出目錄，所以 scenarios/ 需要一份 index.yaml 告訴首頁「有哪些檔」。
+# 那是資料夾的副本，兩邊會分岔——加了檔忘了寫進 index，情境就人間蒸發。
+#
+# 交給人維護的話還會多踩一腳：COO-86 讓教官用 GitHub 的預填網址送 PR，而那是
+# **單檔編輯器**，一次只能新增一個檔。若加情境同時得改 index，他送完 PR 還要回去找那個
+# branch 改第二個檔——「要懂 branch」正是 COO-86 明文寫的驗收失敗條件。
+#
+# 所以 index 一律由機器產生：PR 永遠只有一個檔，index 在 merge 之後由這裡補上。
+#
+# 不會無限迴圈：用 GITHUB_TOKEN 推的 commit 依設計不會再觸發 workflow，這是 GitHub 內建的斷路器。
+
+name: 重新產生 scenarios/index.yaml
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scenarios/**'
+      - 'tools/build-scenarios-index.js'
+      - 'tools/load-scenarios.js'
+
+permissions:
+  contents: write
+
+# 連續 merge 兩個情境時，兩次執行不要同時推 main
+concurrency:
+  group: scenarios-index
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: node tools/build-scenarios-index.js
+
+      - name: 有變動才 commit
+        run: |
+          if git diff --quiet -- scenarios/index.yaml; then
+            echo "index 已經是最新的，不需要 commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scenarios/index.yaml
+          git commit -m "chore: 重新產生 scenarios/index.yaml"
+          git push

@@ -1,0 +1,26 @@
+id: street-trauma
+name: 街頭外傷
+environment: 市區街道
+medicalEvent: 外傷出血
+note: 路邊外傷出血，圍觀者與同事都在干擾處置
+slides:
+  - id: s1
+    title: 抵達現場
+    note: 描述現場、指派任務，開始止血
+    layers:
+      - type: scene
+      - type: patient
+  - id: s2
+    title: 旁人嗆聲干擾
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 旁人嗆聲干擾
+  - id: s3
+    title: 同事想搬動傷患
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 同事欲搬動傷患

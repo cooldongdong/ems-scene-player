@@ -12,21 +12,47 @@ const path = require('node:path');
 const yaml = require('../vendor/js-yaml.min.js');
 const S = require('../js/scenarios.js');
 
+const { loadScenarios } = require('../tools/load-scenarios.js');
+
 const ROOT = path.join(__dirname, '..');
-const DATA = yaml.load(fs.readFileSync(path.join(ROOT, 'scenario-data.yaml'), 'utf8'));
+const FILE_DATA = yaml.load(fs.readFileSync(path.join(ROOT, 'scenario-data.yaml'), 'utf8'));
+// 情境已經拆到 scenarios/，一個檔一個。這裡**掃資料夾**而不是讀 scenarios/index.yaml：
+// index 只是資料夾的副本，用副本去驗副本的話，index 漏一筆時測試會跟著漏。
+// 瀏覽器沒得選（它列不出目錄），Node 這一端有——理由寫在 tools/load-scenarios.js。
+const SCENARIO_FILES = loadScenarios(ROOT);
+const DATA = { ...FILE_DATA, scenarios: SCENARIO_FILES.map(x => x.scenario) };
 const OPTIONS = DATA.options;
 
 // ---------- 真實資料 ----------
 
-test('scenario-data.yaml 的 7 組情境全部通過正規化，零警告', () => {
+test('scenarios/ 的 7 組情境全部通過正規化，零警告', () => {
   const { scenarios, warnings } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
   assert.deepEqual(warnings, []);
   assert.equal(scenarios.length, 7);
 });
 
 test('舊的 presets 鍵已經完全移除，不留相容層', () => {
-  assert.equal('presets' in DATA, false);
-  assert.ok(Array.isArray(DATA.scenarios));
+  assert.equal('presets' in FILE_DATA, false);
+});
+
+test('scenario-data.yaml 不再帶 scenarios——情境的唯一住處是 scenarios/', () => {
+  assert.equal('scenarios' in FILE_DATA, false);
+  assert.deepEqual(Object.keys(FILE_DATA), ['options', 'assets']);
+});
+
+// 檔名 = id 是兩條路共用的約定：匯出用 id 當檔名（exportCurrentScenario），
+// index.yaml 用檔名指路。兩邊對不上的話，匯出的檔丟進資料夾會變成第二筆同 id 情境。
+test('scenarios/ 每個檔的檔名就是它的 id', () => {
+  for (const { file, scenario } of SCENARIO_FILES) {
+    assert.equal(file, `${scenario.id}.yaml`, `${file} 的 id 是「${scenario.id}」，對不上檔名`);
+  }
+});
+
+test('scenarios/ 的每個檔都是「一個情境」，不是包了一層 scenarios 的清單', () => {
+  for (const { file, scenario } of SCENARIO_FILES) {
+    assert.equal('scenarios' in scenario, false, `${file} 多包了一層 scenarios`);
+    assert.ok(Array.isArray(scenario.slides), `${file} 沒有 slides`);
+  }
 });
 
 test('每個情境的 id 都是唯一且為 ASCII kebab-case', () => {
@@ -409,27 +435,34 @@ test('沒有自訂資料時就是純內建（清掉 localStorage 等於還原）
 
 test('匯出 → 匯入 → 再匯出，兩次輸出逐字相同', () => {
   const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
-  const first = S.exportYaml(scenarios, yaml.dump);
-  const back = S.parseImport(first, OPTIONS, yaml.load);
-  assert.equal(back.ok, true);
-  assert.deepEqual(back.warnings, []);
-  const second = S.exportYaml(back.scenarios, yaml.dump);
-  assert.equal(second, first);
+  for (const s of scenarios) {
+    const first = S.exportScenarioYaml(s, yaml.dump);
+    const back = S.parseImport(first, OPTIONS, yaml.load);
+    assert.equal(back.ok, true, s.id);
+    assert.deepEqual(back.warnings, [], s.id);
+    assert.equal(back.scenarios.length, 1);
+    assert.equal(S.exportScenarioYaml(back.scenarios[0], yaml.dump), first, s.id);
+  }
 });
 
-test('匯出的 YAML 可以被 jsyaml 解析，結構是 { scenarios: [...] }', () => {
+// 匯出檔要能原樣放進 scenarios/，所以它**不能**包 scenarios: 那一層——
+// 包了的話貼進資料夾會變成一個 slides 為空的壞情境，而且是靜靜地壞。
+test('匯出的 YAML 就是情境本身，沒有多包一層', () => {
   const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
-  const parsed = yaml.load(S.exportYaml(scenarios, yaml.dump));
-  assert.ok(Array.isArray(parsed.scenarios));
-  assert.equal(parsed.scenarios.length, 7);
+  const parsed = yaml.load(S.exportScenarioYaml(scenarios[0], yaml.dump));
+  assert.equal('scenarios' in parsed, false);
+  assert.equal(parsed.id, scenarios[0].id);
+  assert.ok(Array.isArray(parsed.slides));
 });
 
 test('匯出檔不帶執行期欄位，且 enabled: true 不寫出來（保持最小差異）', () => {
   const merged = S.mergeScenarios(
     S.normalizeScenarios(DATA.scenarios, OPTIONS).scenarios, []);
-  const text = S.exportYaml(merged, yaml.dump);
-  assert.equal(text.includes('source:'), false);
-  assert.equal(text.includes('enabled: true'), false);
+  for (const s of merged) {
+    const text = S.exportScenarioYaml(s, yaml.dump);
+    assert.equal(text.includes('source:'), false, s.id);
+    assert.equal(text.includes('enabled: true'), false, s.id);
+  }
 });
 
 test('關掉的頁在匯出檔裡要寫出 enabled: false，往返才不會被打開', () => {
@@ -440,10 +473,21 @@ test('關掉的頁在匯出檔裡要寫出 enabled: false，往返才不會被�
       { id: 'b', title: 'b', enabled: false, layers: [{ type: 'greenscreen', complication: '旁人嗆聲干擾' }] },
     ],
   }], OPTIONS);
-  const text = S.exportYaml(scenarios, yaml.dump);
+  const text = S.exportScenarioYaml(scenarios[0], yaml.dump);
   assert.ok(text.includes('enabled: false'));
   const back = S.parseImport(text, OPTIONS, yaml.load);
   assert.equal(back.scenarios[0].slides[1].enabled, false);
+});
+
+// 匯入是「別人給你的檔」，所以三種形狀都要進得來：現在匯出的單一情境、
+// 舊版整包匯出的 { scenarios: [...] }、以及手貼的純陣列。
+test('匯入吃單一情境（scenarios/ 裡的檔直接丟進來就該認得）', () => {
+  const text = fs.readFileSync(path.join(ROOT, 'scenarios', SCENARIO_FILES[0].file), 'utf8');
+  const back = S.parseImport(text, OPTIONS, yaml.load);
+  assert.equal(back.ok, true);
+  assert.deepEqual(back.warnings, []);
+  assert.equal(back.scenarios.length, 1);
+  assert.equal(back.scenarios[0].id, SCENARIO_FILES[0].scenario.id);
 });
 
 test('匯入吃 JSON（JSON 是 YAML 的子集，同一個 parser 直接解得動）', () => {
@@ -462,6 +506,52 @@ test('匯入吃「直接一個陣列」的檔案', () => {
   assert.equal(back.scenarios.length, 7);
 });
 
+// ---------- 貢獻（COO-86）----------
+
+test('貢獻 id 是 contrib-日期-亂數，且符合 id 規則（ASCII kebab-case）', () => {
+  const id = S.contributionId(new Date(2026, 7, 10), () => 0.5);
+  assert.match(id, /^contrib-20260810-[0-9a-z]{4}$/);
+  assert.match(id, /^[a-z][a-z0-9-]*$/);
+});
+
+// 兩個教官各自貢獻不能撞成同一個檔名——本機 id 一律是 custom-1、custom-2，撞定了，
+// 所以貢獻時一定要換一個。這條測的就是「真的換得開」。
+test('貢獻 id 會隨亂數改變，不會兩個人撞同一個檔名', () => {
+  const day = new Date(2026, 7, 10);
+  const a = S.contributionId(day, () => 0.1);
+  const b = S.contributionId(day, () => 0.9);
+  assert.notEqual(a, b);
+});
+
+test('貢獻網址帶的檔名用貢獻 id，內容解回來就是那個情境', () => {
+  const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  const scenario = { ...scenarios[0], id: 'contrib-20260810-abcd' };
+  const url = S.contributionUrl(scenario,
+    { repo: 'cooldongdong/ems-scene-player', branch: 'main', dump: yaml.dump });
+
+  const parsed = new URL(url);
+  assert.equal(parsed.origin + parsed.pathname, 'https://github.com/cooldongdong/ems-scene-player/new/main');
+  assert.equal(parsed.searchParams.get('filename'), 'scenarios/contrib-20260810-abcd.yaml');
+
+  const back = S.parseImport(parsed.searchParams.get('value'), OPTIONS, yaml.load);
+  assert.equal(back.ok, true);
+  assert.deepEqual(back.warnings, []);
+  assert.equal(back.scenarios.length, 1);
+  assert.equal(back.scenarios[0].id, 'contrib-20260810-abcd');
+  assert.deepEqual(back.scenarios[0].slides, scenario.slides);
+});
+
+// 網址長度是這條路唯一的硬限制。內建裡最長的是 5 頁的路口車禍，實測約 2500 字元；
+// 這條測試盯的是「別讓某次改動讓匯出突然變得很肥」，不是盯 GitHub 的上限。
+test('內建情境的貢獻網址都遠低於長度上限', () => {
+  const { scenarios } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  for (const s of scenarios) {
+    const url = S.contributionUrl(s,
+      { repo: 'cooldongdong/ems-scene-player', dump: yaml.dump });
+    assert.ok(url.length < 6000, `情境「${s.id}」的貢獻網址 ${url.length} 字元，超過上限`);
+  }
+});
+
 test('匯入壞檔案回報失敗，不丟例外', () => {
   const broken = S.parseImport('{{{ 這不是 yaml', OPTIONS, yaml.load);
   assert.equal(broken.ok, false);
@@ -469,7 +559,7 @@ test('匯入壞檔案回報失敗，不丟例外', () => {
 
   const noScenarios = S.parseImport('foo: bar', OPTIONS, yaml.load);
   assert.equal(noScenarios.ok, false);
-  assert.match(noScenarios.warnings.join(''), /找不到 scenarios/);
+  assert.match(noScenarios.warnings.join(''), /找不到情境/);
 });
 
 test('匯入的檔案裡有壞資料時，好的留下、壞的被跳過並警告', () => {
@@ -678,7 +768,7 @@ test('遷移是冪等的：已經是圖層模型的資料再跑一次不會變',
   assert.deepEqual(twice, once);
 });
 
-test('遷移：scenario-data.yaml 已經是圖層模型，不含任何 actions', () => {
+test('遷移：scenarios/ 的檔已經是圖層模型，不含任何 actions', () => {
   assert.equal(JSON.stringify(DATA.scenarios).includes('"actions"'), false);
   for (const s of DATA.scenarios) {
     for (const slide of s.slides) assert.ok(Array.isArray(slide.layers), `${s.id}/${slide.id} 沒有 layers`);

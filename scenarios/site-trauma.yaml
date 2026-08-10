@@ -1,0 +1,26 @@
+id: site-trauma
+name: 工地外傷
+environment: 工地
+medicalEvent: 外傷出血
+note: 工地外傷出血，工班急著搬動傷患
+slides:
+  - id: s1
+    title: 抵達現場
+    note: 描述現場、確認工地危害與動線
+    layers:
+      - type: scene
+      - type: patient
+  - id: s2
+    title: 同事想搬動傷患
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 同事欲搬動傷患
+  - id: s3
+    title: 旁人嗆聲干擾
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 旁人嗆聲干擾

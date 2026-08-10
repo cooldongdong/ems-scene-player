@@ -1,0 +1,19 @@
+id: site-fall
+name: 工地墜落
+environment: 工地
+medicalEvent: 骨折（墜落）
+note: 工地墜落骨折，同事想直接搬動
+slides:
+  - id: s1
+    title: 抵達現場
+    note: 描述現場、評估墜落高度與固定需求
+    layers:
+      - type: scene
+      - type: patient
+  - id: s2
+    title: 同事想搬動傷患
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 同事欲搬動傷患

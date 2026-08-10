@@ -788,7 +788,8 @@ function setStatus(msg, isError) {
 // 於是新資料配舊程式，錯誤訊息還會指向完全無關的地方。
 const REQUIRED_SCENARIO_API = [
   'normalizeScenarios', 'mergeScenarios', 'forExport', 'complicationsOf', 'playableSlides',
-  'exportYaml', 'parseImport', 'segmentOf', 'complicationSegments', 'eligibleAssets',
+  'exportScenarioYaml', 'parseImport', 'contributionId', 'contributionUrl',
+  'segmentOf', 'complicationSegments', 'eligibleAssets',
   'availableComplications', 'baseCoverage',
 ];
 
@@ -809,12 +810,48 @@ function checkScenarioApi() {
   return null;
 }
 
+// 情境住在 scenarios/，一個檔一個情境。但**純靜態網站沒辦法問伺服器「這個資料夾裡有什麼」**
+// ——HTTP 根本沒有這個動詞——所以只能先讀 scenarios/index.yaml 這張檔名清單，再照著一個一個抓。
+//
+// 那張清單是資料夾的副本，不是真相，由 tools/build-scenarios-index.js 掃資料夾產生
+// （GitHub 上由 .github/workflows/scenarios-index.yml 在 push 到 main 後自動重產）。
+//
+// 不要改成「去讀伺服器自動生的目錄列表」：python3 -m http.server 會生一頁，
+// GitHub Pages 不會（沒有 index.html 的資料夾直接 404）。那種寫法本機測起來全綠，一上線全掛。
+async function fetchYaml(url) {
+  // no-cache：改完 YAML 重新整理就要看到新資料，不能讀到瀏覽器快取的舊版
+  const res = await fetch(url, { cache: 'no-cache' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return jsyaml.load(await res.text());
+}
+
+async function loadScenarioFiles() {
+  let index;
+  try {
+    index = await fetchYaml('scenarios/index.yaml');
+  } catch (err) {
+    // 清單讀不到就是沒有內建情境，但自訂情境（localStorage）仍該照常出現
+    console.warn('讀不到 scenarios/index.yaml，這次沒有內建情境：' + err.message);
+    return [];
+  }
+  const files = Array.isArray(index && index.files) ? index.files : [];
+  const loaded = await Promise.all(files.map(async name => {
+    try {
+      return await fetchYaml('scenarios/' + name);
+    } catch (err) {
+      // 一個檔壞掉不該讓整份清單消失。會走到這裡多半是 index 列了已經被刪掉的檔
+      console.warn(`情境檔 scenarios/${name} 讀取失敗，已跳過：${err.message}`);
+      return null;
+    }
+  }));
+  return loaded.filter(Boolean);
+}
+
 async function init() {
   // 讀檔與後續處理分開接錯：只有真的抓不到檔才該建議「用本地伺服器開啟」。
   // 混在一起的話，任何錯誤都會被說成伺服器問題，把人指向錯的方向。
   let text;
   try {
-    // no-cache：改完 YAML 重新整理就要看到新資料，不能讀到瀏覽器快取的舊版
     const res = await fetch('scenario-data.yaml', { cache: 'no-cache' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     text = await res.text();
@@ -830,10 +867,11 @@ async function init() {
     if (apiProblem) throw new Error(apiProblem);
     DATA = jsyaml.load(text);
     if (!DATA || !Array.isArray(DATA.assets)) throw new Error('scenario-data.yaml 缺少 assets 陣列');
+    DATA.scenarios = await loadScenarioFiles();
     buildScenarios();
     syncScenarioActive();
     renderFlow();   // 先把版面收成「未選情境」的樣子
-    setStatus(`素材庫已載入：${DATA.assets.length} 筆`);
+    setStatus(`素材庫已載入：${DATA.assets.length} 筆，情境 ${DATA.scenarios.length} 組`);
   } catch (err) {
     setStatus('初始化失敗：' + err.message, true);
   }
@@ -872,7 +910,7 @@ const SCENARIO_STORE_KEY = 'ems-scene-player:scenarios';
 let activeScenarios = [];
 
 // 自訂情境存 localStorage，用 JSON——只存字串、往返精確、沒有人會手讀這一份。
-// （匯出給人看的檔案才用 YAML，那是另一條路，見 js/scenarios.js 的 exportYaml。）
+// （匯出給人看的檔案才用 YAML，那是另一條路，見 js/scenarios.js 的 exportScenarioYaml。）
 function readCustomScenarios() {
   try {
     const raw = localStorage.getItem(SCENARIO_STORE_KEY);
@@ -1388,17 +1426,73 @@ function buildScenarioSettingsRow(doc) {
 
 // ---------- 匯出／匯入 ----------
 
-function exportScenarios() {
-  const text = Scenarios.exportYaml(activeScenarios, jsyaml.dump);
+// 匯出的是**目前這一個情境**，不是全部。檔名就是 scenarios/ 裡該用的檔名，
+// 所以下載下來的檔可以原樣丟進資料夾，不必再改名或剪貼。
+function downloadScenario(scenario) {
+  const text = Scenarios.exportScenarioYaml(scenario, jsyaml.dump);
   const blob = new Blob([text], { type: 'text/yaml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = Object.assign(document.createElement('a'),
-    { href: url, download: 'ems-scenarios.yaml' });
+    { href: url, download: `${scenario.id}.yaml` });
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  setStatus(`已匯出 ${activeScenarios.length} 個情境（YAML，可直接貼回 scenario-data.yaml）`);
+}
+
+function exportCurrentScenario() {
+  if (!currentScenario) return;
+  downloadScenario(currentScenario);
+  setStatus(`已匯出情境「${currentScenario.name}」（${currentScenario.id}.yaml，可直接放進 scenarios/）`);
+}
+
+// ---------- 貢獻（送 PR）----------
+// COO-86。網址與 id 的規則在 js/scenarios.js，這裡只負責把關與開分頁。
+
+const CONTRIB_REPO = 'cooldongdong/ems-scene-player';
+const CONTRIB_BRANCH = 'main';
+// 網址長度的保險。實測 5 頁的情境約 2500 字元，離瀏覽器與 GitHub 的上限還很遠，
+// 但頁數是線性長上去的，超過就退回「下載檔案」那條路——寧可多一步手動，
+// 也不要送出一個被截斷的網址：那會生出一個看起來成功、內容卻少一半的 PR。
+const CONTRIB_URL_LIMIT = 6000;
+
+// 貢獻進來的情境**只是素材的引用**。用了這個環境×急救事件下不存在的素材，別人載入時
+// 只會靜靜地少一段——沒有錯誤訊息、沒有紅字。所以擋在送出前，而不是等 review 才發現。
+function contributionProblem(scenario) {
+  const broken = scenarioBrokenComplications(scenario);
+  if (broken.length) {
+    return `「${scenario.environment}／${scenario.medicalEvent}」下沒有這些突發狀況的素材：${broken.join('、')}`;
+  }
+  const missing = missingBaseLabels(scenario.environment, scenario.medicalEvent);
+  if (missing.length) {
+    return `「${scenario.environment}／${scenario.medicalEvent}」缺少素材：${missing.join('、')}`;
+  }
+  return null;
+}
+
+function contributeCurrentScenario() {
+  if (!currentScenario) return;
+
+  const problem = contributionProblem(currentScenario);
+  if (problem) {
+    setStatus(`還不能貢獻：${problem}。修好再送。`, true);
+    return;
+  }
+
+  const scenario = { ...currentScenario, id: Scenarios.contributionId() };
+  const url = Scenarios.contributionUrl(scenario,
+    { repo: CONTRIB_REPO, branch: CONTRIB_BRANCH, dump: jsyaml.dump });
+
+  if (url.length > CONTRIB_URL_LIMIT) {
+    downloadScenario(scenario);
+    setStatus(`這個情境太長，塞不進 GitHub 的預填網址，已改成下載檔案——`
+      + `請把 ${scenario.id}.yaml 放進 repo 的 scenarios/ 資料夾。`, true);
+    return;
+  }
+
+  window.open(url, '_blank', 'noopener');
+  setStatus(`已開啟 GitHub 貢獻頁（${scenario.id}.yaml）——`
+    + `捲到最下面按 "Propose new file" 就會送出 PR，不會動到別人的東西。`);
 }
 
 function importScenarios(text) {
@@ -2181,9 +2275,10 @@ function flowButton(doc, label, onClick, { primary = false, disabled = false } =
 function buildScenarioTools(doc) {
   const bar = doc.createElement('div');
   bar.className = 'flow-actions';
+  // 匯入留在清單這一層（它是「加一個情境進來」），匯出移到編輯畫面——
+  // 匯出現在的單位是「一個情境」，在還沒選情境的清單上沒有東西可以匯
   bar.append(
     flowButton(doc, '＋ 新增情境', newScenario, { primary: true }),
-    flowButton(doc, '匯出 YAML', exportScenarios),
     flowButton(doc, '匯入', pickImportFile),
   );
   return bar;
@@ -2432,8 +2527,12 @@ function buildFlowPanel(doc, preview) {
 
   const addBar = doc.createElement('div');
   addBar.className = 'flow-actions';
-  addBar.append(flowButton(doc, '＋ 新增頁', addSlide));
-  // 內建情境來自 scenario-data.yaml，刪不掉也不該刪——這顆只給存在本機的自訂情境
+  addBar.append(
+    flowButton(doc, '＋ 新增頁', addSlide),
+    flowButton(doc, '匯出這個情境', exportCurrentScenario),
+    flowButton(doc, '貢獻這個情境', contributeCurrentScenario),
+  );
+  // 內建情境來自 scenarios/，刪不掉也不該刪——這顆只給存在本機的自訂情境
   if (currentScenario.source !== 'builtin') {
     const del = flowButton(doc, '刪除這個情境', () => {
       if (confirm(`確定刪除情境「${currentScenario.name}」？這會從本機移除，無法復原。`)) {
