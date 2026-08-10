@@ -1,0 +1,32 @@
+# 資料層測試
+#
+# 這支的主要對象是**別人送進來的情境 PR**（COO-86）：貢獻進來的情境只是素材的引用，
+# 用了不存在的素材、或值對不上 options 的情境，載入時會被靜靜跳過。要在 review 前就看見，
+# 唯一的辦法是讓機器跑一次 normalizeScenarios。
+#
+# 這裡**刻意不檢查 scenarios/index.yaml 有沒有跟上**。教官送 PR 時只能新增一個檔
+# （GitHub 的預填網址是單檔編輯器），他的 index 依定義就是舊的；若因此變紅，
+# 那條貢獻路線整條廢掉。index 的新鮮度由 scenarios-index.yml 在 merge 之後負責。
+#
+# 測試本身也是掃資料夾而不是讀 index——理由寫在 tools/load-scenarios.js。
+
+name: 測試
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # 沒有 package.json，也不需要——node --test 是內建的
+      - run: node --test

@@ -1,0 +1,19 @@
+id: street-fall
+name: 街頭墜落骨折
+environment: 市區街道
+medicalEvent: 骨折（墜落）
+note: 墜落骨折，同事想直接把人搬走
+slides:
+  - id: s1
+    title: 抵達現場
+    note: 描述現場、評估墜落高度與可能的脊椎傷害
+    layers:
+      - type: scene
+      - type: patient
+  - id: s2
+    title: 同事想搬動傷患
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 同事欲搬動傷患

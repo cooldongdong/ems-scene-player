@@ -1,0 +1,19 @@
+id: studio-selfharm
+name: 套房自傷
+environment: 出租套房
+medicalEvent: 自傷（割腕）
+note: 套房內自傷，患者情緒仍在失控
+slides:
+  - id: s1
+    title: 抵達現場
+    note: 描述現場、確認環境安全再接近患者
+    layers:
+      - type: scene
+      - type: patient
+  - id: s2
+    title: 情緒失控自傷
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 情緒失控自傷

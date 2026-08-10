@@ -1,0 +1,43 @@
+id: intersection-crash
+name: 路口車禍
+environment: 市區街道
+medicalEvent: 車禍多重傷
+note: 路口車禍多重傷，肇事雙方在旁爭吵
+slides:
+  - id: s1
+    title: 抵達現場
+    note: 描述現場、確認交通管制與傷患人數
+    layers:
+      - type: scene
+      - type: patient
+  - id: s2
+    title: 肇事雙方爭吵（1/3）
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 肇事雙方爭吵
+        segment: '1'
+  - id: s3
+    title: 肇事雙方爭吵（2/3）
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 肇事雙方爭吵
+        segment: '2'
+  - id: s4
+    title: 肇事雙方爭吵（3/3）
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 肇事雙方爭吵
+        segment: '3'
+  - id: s5
+    title: 旁人嗆聲干擾
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 旁人嗆聲干擾

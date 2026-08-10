@@ -1,0 +1,15 @@
+# 自動產生，不要手改。
+#
+# 這是 scenarios/ 資料夾的檔案清單。純靜態網站沒有辦法問伺服器「這個資料夾裡有什麼」
+# （HTTP 沒有這個動詞），所以首頁只能照著這張清單一個一個去抓。
+#
+# 真相是資料夾本身，這裡是副本。手改這個檔只會讓兩邊分岔——
+# 本機請跑 node tools/build-scenarios-index.js，GitHub 上由 workflow 自動重產。
+files:
+  - home-ohca.yaml
+  - intersection-crash.yaml
+  - site-fall.yaml
+  - site-trauma.yaml
+  - street-fall.yaml
+  - street-trauma.yaml
+  - studio-selfharm.yaml

@@ -1,0 +1,19 @@
+id: home-ohca
+name: 住宅 OHCA
+environment: 住宅客廳
+medicalEvent: 心跳停止（OHCA）
+note: 家中倒地的長者，家屬在旁崩潰
+slides:
+  - id: s1
+    title: 抵達現場
+    note: 描述現場、指派任務，等隊員完成初步評估
+    layers:
+      - type: scene
+      - type: patient
+  - id: s2
+    title: 家屬崩潰哭喊
+    layers:
+      - type: scene
+      - type: patient
+      - type: greenscreen
+        complication: 家屬崩潰哭喊

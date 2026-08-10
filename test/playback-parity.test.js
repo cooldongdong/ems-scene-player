@@ -25,8 +25,13 @@ const path = require('node:path');
 const yaml = require('../vendor/js-yaml.min.js');
 const S = require('../js/scenarios.js');
 
+const { loadScenarios } = require('../tools/load-scenarios.js');
+
 const ROOT = path.join(__dirname, '..');
 const DATA = yaml.load(fs.readFileSync(path.join(ROOT, 'scenario-data.yaml'), 'utf8'));
+// 情境改住 scenarios/（COO-84）。掃資料夾，不讀 index.yaml——理由見 tools/load-scenarios.js。
+// **拆檔不該讓這份快照有任何變動**，那就是這次遷移的驗收。
+DATA.scenarios = loadScenarios(ROOT).map(x => x.scenario);
 const BASELINE_FILE = path.join(__dirname, 'playback-baseline.json');
 
 const { scenarios } = S.normalizeScenarios(DATA.scenarios, DATA.options);
@@ -99,11 +104,19 @@ test('播放序列與素材候選集合與快照一致', () => {
     '找不到 playback-baseline.json，先跑一次 UPDATE_BASELINE=1 node --test');
   const baseline = JSON.parse(fs.readFileSync(BASELINE_FILE, 'utf8'));
 
-  // 逐組比對而不是整包 deepEqual：整包失敗時的 diff 讀不出是哪一組情境壞的
-  assert.deepEqual(current.scenarios.map(s => s.id), baseline.scenarios.map(s => s.id),
+  // 逐組比對而不是整包 deepEqual：整包失敗時的 diff 讀不出是哪一組情境壞的。
+  //
+  // 依 id 對照而不是依位置：清單順序是「畫面上先看到誰」，不是播放行為。COO-84 把情境
+  // 拆進 scenarios/ 之後，順序由檔名決定，跟原本手排的順序不同——那是一次刻意的改動，
+  // 不該讓這條測試變紅。順序若哪天真的重要，該另外立一條測試；跟播放共用同一個紅燈的話，
+  // 「播放壞了」與「排序變了」看起來會一模一樣。
+  assert.deepEqual(
+    current.scenarios.map(s => s.id).sort(),
+    baseline.scenarios.map(s => s.id).sort(),
     '情境清單本身變了');
-  for (const [i, scenario] of current.scenarios.entries()) {
-    assert.deepEqual(scenario, baseline.scenarios[i], `情境「${scenario.id}」的播放輪廓變了`);
+  for (const scenario of current.scenarios) {
+    const was = baseline.scenarios.find(s => s.id === scenario.id);
+    assert.deepEqual(scenario, was, `情境「${scenario.id}」的播放輪廓變了`);
   }
 });
 

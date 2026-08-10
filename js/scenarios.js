@@ -363,11 +363,29 @@
   }
 
   /**
-   * 匯出成可直接貼回 scenario-data.yaml 的文字。
+   * 匯出**一個**情境，成為可以直接放進 scenarios/ 的檔案內容。
+   *
+   * 為什麼是單一情境而不是整包：匯出檔要能被 review、能被 PR 進來（COO-86），
+   * 而「一個檔一個情境」讓這件事變成「新增一個檔」。整包匯出的話，貢獻者送出的是
+   * 一份包含別人情境的大檔，diff 全是雜訊，沒有人 review 得動。
+   *
+   * 所以這裡**不包 `scenarios:` 那一層**——檔案的內容就是情境本身，
+   * 跟 scenarios/ 裡的檔一模一樣，貼進去就能用。
+   *
    * @param dump 由呼叫端注入的 jsyaml.dump，這一層不綁任何 yaml 實作
    */
-  function exportYaml(scenarios, dump) {
-    return dump({ scenarios: forExport(scenarios) }, { lineWidth: -1, noRefs: true });
+  function exportScenarioYaml(scenario, dump) {
+    return dump(forExport([scenario])[0], { lineWidth: -1, noRefs: true });
+  }
+
+  // 匯入時能接受的三種形狀。單一情境是現在匯出的形狀，另外兩種是為了讓舊的匯出檔
+  // 與手貼的 scenario-data.yaml 片段還進得來——匯入是別人給你的檔，不能只認自己寫的格式。
+  function importCandidates(data) {
+    if (Array.isArray(data)) return data;
+    if (!isObject(data)) return null;
+    if (Array.isArray(data.scenarios)) return data.scenarios;
+    if (data.slides !== undefined) return [data];
+    return null;
   }
 
   /**
@@ -382,13 +400,102 @@
     } catch (err) {
       return { scenarios: [], warnings: [`檔案解析失敗：${err.message}`], ok: false };
     }
-    // 接受 { scenarios: [...] } 或直接一個陣列
-    const raw = Array.isArray(data) ? data : (isObject(data) ? data.scenarios : null);
+    const raw = importCandidates(data);
     if (!raw) {
-      return { scenarios: [], warnings: ['檔案裡找不到 scenarios 陣列'], ok: false };
+      return {
+        scenarios: [],
+        warnings: ['檔案裡找不到情境（要嘛是單一個情境，要嘛是 scenarios 陣列）'],
+        ok: false,
+      };
     }
     const result = normalizeScenarios(raw, options);
     return { ...result, ok: true };
+  }
+
+  // ---------- id ----------
+  // id 是這個情境的身分：localStorage 靠它比對「自訂覆蓋內建」，匯出與送 PR 靠它當檔名。
+  // 以前它只由程式產生（custom-1、custom-2），人改不到，於是那個既不描述內容、
+  // 又只在一台電腦裡唯一的字串一路流到了檔名——所以現在讓人改，也因此需要驗證。
+
+  const ID_PATTERN = /^[a-z][a-z0-9-]*$/;
+  const ID_MAX = 60;
+
+  /**
+   * id 有沒有問題。回傳 null＝可以用，否則回傳一句給人看的話。
+   * @param taken 已經被佔走的 id（其他情境、scenarios/ 裡的檔名）
+   */
+  function scenarioIdProblem(id, taken) {
+    const value = trimmed(id);
+    if (!value) return 'id 不能空白';
+    if (value.length > ID_MAX) return `id 太長了（最多 ${ID_MAX} 個字）`;
+    // 這條規則不是潔癖：id 會變成 scenarios/<id>.yaml 的檔名，也會進網址
+    if (!ID_PATTERN.test(value)) {
+      return 'id 只能用小寫英數字與連字號，且要以英文字母開頭（例：home-ohca-night）';
+    }
+    if (asArray(taken).includes(value)) return `id「${value}」已經有人用了`;
+    return null;
+  }
+
+  /**
+   * 複製時的新 id：從原本那個長出來，而不是回到 custom-N。
+   * `home-ohca` → `home-ohca-copy` → `home-ohca-copy-2`……
+   * 一眼看得出是從哪一個複製的，這在之後要送 PR 時特別有用。
+   */
+  function copyScenarioId(baseId, taken) {
+    const list = asArray(taken);
+    const base = `${trimmed(baseId) || 'scenario'}-copy`;
+    if (!list.includes(base)) return base;
+    let n = 2;
+    while (list.includes(`${base}-${n}`)) n++;
+    return `${base}-${n}`;
+  }
+
+  // ---------- 貢獻（送 PR）----------
+  // COO-86：讓不會 git 的教官把編好的情境送成 PR。走 GitHub 的「新增檔案」預填網址，
+  // 開過去就是一個內容已經填好的網頁編輯器，按 "Propose new file" 就送出 PR——
+  // 不需要 OAuth、不需要後端。（真正的替代方案 OAuth + GitHub API 要 client secret，
+  // 靜態網站放不了，所以這是唯一走得通的路。）
+  //
+  // 那個編輯器**一次只能新增一個檔**，這正是情境必須拆成 scenarios/ 的原因（COO-84）：
+  // 貢獻＝新增一個檔，中途不必碰 index、不必懂 branch。
+
+  /** 情境檔在 repo 裡的路徑。匯出、送 PR、index.yaml 共用同一條規則 */
+  function scenarioPath(id) {
+    return `scenarios/${id}.yaml`;
+  }
+
+  /**
+   * GitHub 的網頁編輯器網址。兩種動詞，**但只有一種吃得下預填**：
+   *
+   *   new   `/new/{branch}?filename=…&value=…`   新增一個檔。**預填成立**（2026-08-10 實測）
+   *   edit  `/edit/{branch}/{path}`              改既有的檔。**`?value=` 無效**——
+   *                                              2026-08-10 實測 `/edit/main/dev.md?value=X`
+   *                                              開出來仍是原本的 dev.md，參數被忽略
+   *
+   * 所以修正那條路沒辦法把內容塞進網址，只能把內容放進剪貼簿、讓人到那邊貼上。
+   * 呼叫端要負責複製，不然使用者會對著原檔一頭霧水（見 index.html 的 contributeFix）。
+   *
+   * 為什麼不乾脆兩種都走 new：`/new/` 指向一個已經存在的路徑，GitHub 會在送出時
+   * 擋下來說「這個檔名已經存在」——那比多貼一次更糟，因為錯誤發生在最後一步。
+   *
+   * 走哪一種不需要問使用者——**他改的是不是既有情境，資料裡就寫著**（source）。
+   * review 端的差別才是重點：new 送出的是「多一個檔」，review 的人得自己比對它跟
+   * 哪一個情境九成像；edit 送出的是那個檔的 diff，一眼看得出改了哪一句台詞。
+   *
+   * @param mode 'new'（預設）或 'edit'
+   * @param dump 由呼叫端注入的 jsyaml.dump（mode 為 edit 時用不到）
+   */
+  function contributionUrl(scenario, { repo, branch = 'main', dump, mode = 'new' }) {
+    const path = scenarioPath(scenario.id);
+    const at = encodeURIComponent(branch);
+    if (mode === 'edit') {
+      // 路徑是網址的一部分，斜線要留著當分隔，只 encode 各段
+      const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+      return `https://github.com/${repo}/edit/${at}/${encodedPath}`;
+    }
+    return `https://github.com/${repo}/new/${at}`
+      + `?filename=${encodeURIComponent(path)}`
+      + `&value=${encodeURIComponent(exportScenarioYaml(scenario, dump))}`;
   }
 
   // ---------- actions 模型 → 圖層模型 ----------
@@ -631,8 +738,12 @@
     normalizeScenarios,
     mergeScenarios,
     forExport,
-    exportYaml,
+    exportScenarioYaml,
     parseImport,
+    scenarioIdProblem,
+    copyScenarioId,
+    scenarioPath,
+    contributionUrl,
     migrateScenario,
     migrateScenarios,
   };
