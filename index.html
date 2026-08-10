@@ -40,8 +40,17 @@
      不是同一頁往下長出幾個控制項，而是整個版面換掉：標題區與情境清單收起來，
      編輯佔滿整個寬度，靠頂部那條「‹ 回到情境」回去。使用者要「感覺自己進到了
      另一個地方」，靠的是版面換掉，不是欄位重排。 */
-  body.editing header,
   body.editing .workspace-side { display: none; }
+  /* 編輯模式收掉大標與說明，但**狀態列要留著**。
+     原本這裡是 `body.editing header { display:none }`，於是「已匯出」「id 已改成…」
+     「還不能貢獻」這些訊息全部寫進黑洞——程式不會報錯，字也確實寫進去了，
+     使用者就是看不到。這正是 <header> 裡那行「狀態列必須永遠看得見」的註解要防的事，
+     只是編輯畫面出現之後沒有人回頭看它。
+     不要改成「把狀態列搬進編輯畫面」：那個節點會落進 #flow，而 renderFlow 每次
+     replaceChildren 都會把它連根銷毀，下一次 getElementById 就是 null——踩過。 */
+  body.editing header > :not(.status-line) { display: none; }
+  body.editing header { margin: 0; }
+  body.editing .status-line { margin: 0 0 10px; }
   body.editing .workspace { grid-template-columns: minmax(0, 1fr); margin-top: 0; }
   body.editing .workspace-main { margin-top: 0; }
   /* 編輯畫面自己有一條頂欄，所以外框不需要再留一圈圓角與邊界 */
@@ -390,7 +399,17 @@
   .settings-actions {
     margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
   }
-  .settings-actions button { font-size: 13px; padding: 6px 12px; }
+  .settings-actions button, .settings-actions .flow-btn { font-size: 13px; padding: 6px 12px; }
+  /* 只在「這個情境還不能貢獻」時才出現，所以不是常駐說明，是當下的理由 */
+  .settings-note { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: #ff8f6b; }
+  /* 連結版的按鈕：<a> 沒有 button 的預設樣式，這裡把它補齊 */
+  a.flow-btn {
+    display: inline-block; text-decoration: none; line-height: normal;
+    font-family: inherit; font-size: 15px; padding: 11px 22px;
+    border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text); cursor: pointer;
+  }
+  a.flow-btn:hover { border-color: var(--accent); }
   /* 與底下的頁之間留一條界線：它不是第 0 頁。
      **這條線是 .flow-list 自己的一格，不是設定列的 ::after。** 畫在設定列裡面時，
      展開狀態的 .flow-item 會用 overflow:hidden ＋ 外框把它吃掉（線消失），而且
@@ -1496,8 +1515,23 @@ function buildScenarioSettingsRow(doc) {
       // 內建情境刪不掉也改不動，複製是他唯一的入口
       flowButton(doc, '複製', () => duplicateScenario(currentScenario)),
       flowButton(doc, '匯出', exportCurrentScenario),
-      flowButton(doc, '貢獻', contributeCurrentScenario),
     );
+
+    // 貢獻。把關在這裡跑而不是等他點下去——**不能用的東西該長得像不能用**，
+    // 而不是點了以後被一句話拒絕。
+    const problem = contributionProblem(currentScenario);
+    if (problem) {
+      const blocked = flowButton(doc, '貢獻', () => {}, { disabled: true });
+      blocked.title = `還不能貢獻：${problem}`;
+      actions.appendChild(blocked);
+    } else {
+      const target = contributionTarget(currentScenario);
+      actions.appendChild(target.tooLong
+        ? flowButton(doc, '貢獻', () => downloadForContribution(target))
+        : flowLink(doc, '貢獻', target.url, () => setStatus(
+            `已開啟 GitHub 貢獻頁（${target.scenario.id}.yaml）——`
+            + '捲到最下面按 "Propose new file" 就會送出 PR，不會動到別人的東西。')));
+    }
     // 內建情境來自 scenarios/，刪不掉也不該刪——這顆只給存在本機的自訂情境
     if (currentScenario.source !== 'builtin') {
       const del = flowButton(doc, '刪除', () => {
@@ -1509,6 +1543,14 @@ function buildScenarioSettingsRow(doc) {
       actions.appendChild(del);
     }
     inner.appendChild(actions);
+    // 只在擋下來的時候出現：停用的按鈕說得出「不能」，說不出「為什麼不能」，
+    // 而那個為什麼是他修得好的東西（多半是換個環境×急救事件就有素材了）
+    if (problem) {
+      inner.appendChild(Object.assign(doc.createElement('p'), {
+        className: 'settings-note',
+        textContent: `還不能貢獻：${problem}`,
+      }));
+    }
 
     body.appendChild(inner);
     item.appendChild(body);
@@ -1562,29 +1604,22 @@ function contributionProblem(scenario) {
   return null;
 }
 
-function contributeCurrentScenario() {
-  if (!currentScenario) return;
-
-  const problem = contributionProblem(currentScenario);
-  if (problem) {
-    setStatus(`還不能貢獻：${problem}。修好再送。`, true);
-    return;
-  }
-
-  const scenario = { ...currentScenario, id: Scenarios.contributionId() };
-  const url = Scenarios.contributionUrl(scenario,
+// 貢獻用的一次性情境（換上 contrib- 的 id）＋ 它的網址。
+// 在 render 時算好，所以「能不能貢獻」在畫面上就看得出來，不必等他點下去才拒絕。
+function contributionTarget(scenario) {
+  const withId = { ...scenario, id: Scenarios.contributionId() };
+  const url = Scenarios.contributionUrl(withId,
     { repo: CONTRIB_REPO, branch: CONTRIB_BRANCH, dump: jsyaml.dump });
+  return { scenario: withId, url, tooLong: url.length > CONTRIB_URL_LIMIT };
+}
 
-  if (url.length > CONTRIB_URL_LIMIT) {
-    downloadScenario(scenario);
-    setStatus(`這個情境太長，塞不進 GitHub 的預填網址，已改成下載檔案——`
-      + `請把 ${scenario.id}.yaml 放進 repo 的 scenarios/ 資料夾。`, true);
-    return;
-  }
-
-  window.open(url, '_blank', 'noopener');
-  setStatus(`已開啟 GitHub 貢獻頁（${scenario.id}.yaml）——`
-    + `捲到最下面按 "Propose new file" 就會送出 PR，不會動到別人的東西。`);
+// 網址塞不下時的退路：下載檔案，讓人自己放進 scenarios/。
+// 寧可多一步手動，也不要送出一個被截斷的網址——那會生出一個看起來成功、
+// 內容卻少一半的 PR。
+function downloadForContribution(target) {
+  downloadScenario(target.scenario);
+  setStatus('這個情境太長，塞不進 GitHub 的預填網址，已改成下載檔案——'
+    + `請把 ${target.scenario.id}.yaml 放進 repo 的 scenarios/ 資料夾。`, true);
 }
 
 function importScenarios(text) {
@@ -2362,6 +2397,18 @@ function flowButton(doc, label, onClick, { primary = false, disabled = false } =
   btn.className = 'flow-btn' + (primary ? ' primary' : '');
   btn.addEventListener('click', onClick);
   return btn;
+}
+
+// 長得像按鈕，但是一條真的連結。用在「要開另一個網頁」的地方——
+// window.open() 是程式自己開視窗，瀏覽器與擴充功能都在防它（實測會直接回傳 null，
+// 使用者按下去完全沒有反應）；使用者點連結沒有人會擋。
+function flowLink(doc, label, href, onClick) {
+  const a = Object.assign(doc.createElement('a'), {
+    textContent: label, href, target: '_blank', rel: 'noopener noreferrer',
+  });
+  a.className = 'flow-btn';
+  if (onClick) a.addEventListener('click', onClick);
+  return a;
 }
 
 function buildScenarioTools(doc) {
