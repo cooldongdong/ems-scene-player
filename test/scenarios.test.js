@@ -506,6 +506,43 @@ test('匯入吃「直接一個陣列」的檔案', () => {
   assert.equal(back.scenarios.length, 7);
 });
 
+// ---------- id（COO-103）----------
+
+test('id 驗證：空白、太長、非法字元、撞名都要擋，合法的放行', () => {
+  assert.equal(S.scenarioIdProblem('home-ohca-night', ['home-ohca']), null);
+  assert.match(S.scenarioIdProblem('', []), /不能空白/);
+  assert.match(S.scenarioIdProblem('a'.repeat(61), []), /太長/);
+  assert.match(S.scenarioIdProblem('home-ohca', ['home-ohca']), /已經有人用/);
+});
+
+// 這條規則不是潔癖：id 會變成 scenarios/<id>.yaml 的檔名，也會進 GitHub 的網址。
+// 中文檔名、大寫、空白、斜線都會在某一層炸開，而且多半是靜靜地炸。
+test('id 只收小寫英數字與連字號，且要以英文字母開頭', () => {
+  for (const bad of ['住宅', 'Home-OHCA', 'home ohca', 'home/ohca', '1-home', '-home', 'home_ohca']) {
+    assert.ok(S.scenarioIdProblem(bad, []), `「${bad}」應該被擋下來`);
+  }
+  for (const ok of ['home-ohca', 'a', 'a1', 'contrib-20260810-abcd']) {
+    assert.equal(S.scenarioIdProblem(ok, []), null, `「${ok}」應該放行`);
+  }
+});
+
+test('複製的 id 從原本那個長出來，撞到就往後編號', () => {
+  assert.equal(S.copyScenarioId('home-ohca', []), 'home-ohca-copy');
+  assert.equal(S.copyScenarioId('home-ohca', ['home-ohca-copy']), 'home-ohca-copy-2');
+  assert.equal(S.copyScenarioId('home-ohca', ['home-ohca-copy', 'home-ohca-copy-2']), 'home-ohca-copy-3');
+});
+
+// 複製出來的 id 必須自己也是合法 id，否則複製兩次就生出一個匯出不了的情境
+test('複製出來的 id 自己也通得過 id 驗證', () => {
+  let id = 'home-ohca';
+  const taken = [id];
+  for (let i = 0; i < 3; i++) {
+    id = S.copyScenarioId(id, taken);
+    assert.equal(S.scenarioIdProblem(id, taken.filter(x => x !== id)), null, id);
+    taken.push(id);
+  }
+});
+
 // ---------- 貢獻（COO-86）----------
 
 test('貢獻 id 是 contrib-日期-亂數，且符合 id 規則（ASCII kebab-case）', () => {

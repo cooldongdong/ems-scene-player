@@ -391,6 +391,8 @@
     margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
   }
   .settings-actions button { font-size: 13px; padding: 6px 12px; }
+  /* id 會變成檔名，改它不是換標籤——這行字就是在講這件事，不能省 */
+  .settings-hint { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
   /* 與底下的頁之間留一條界線：它不是第 0 頁。
      **這條線是 .flow-list 自己的一格，不是設定列的 ::after。** 畫在設定列裡面時，
      展開狀態的 .flow-item 會用 overflow:hidden ＋ 外框把它吃掉（線消失），而且
@@ -795,6 +797,7 @@ function setStatus(msg, isError) {
 const REQUIRED_SCENARIO_API = [
   'normalizeScenarios', 'mergeScenarios', 'forExport', 'complicationsOf', 'playableSlides',
   'exportScenarioYaml', 'parseImport', 'contributionId', 'contributionUrl',
+  'scenarioIdProblem', 'copyScenarioId',
   'segmentOf', 'complicationSegments', 'eligibleAssets',
   'availableComplications', 'baseCoverage',
 ];
@@ -1311,12 +1314,62 @@ function newScenario() {
   setStatus('新情境已建立——先選「環境」與「急救事件」，素材會跟著換。');
 }
 
+// 複製的 id 從原本那個長出來（home-ohca → home-ohca-copy），不回到 custom-N：
+// 一眼看得出是從哪一個複製的，之後送 PR 時 review 的人也看得懂。
 function duplicateScenario(scenario) {
   const copy = JSON.parse(JSON.stringify(Scenarios.forExport([scenario])[0]));
-  copy.id = nextScenarioId();
+  copy.id = Scenarios.copyScenarioId(scenario.id, activeScenarios.map(s => s.id));
   copy.name = scenario.name + '（複製）';
   saveScenarioOverride(copy);
   loadScenario(activeScenarios.find(s => s.id === copy.id) || copy);
+  // 複製完的下一件事一定是改名與改 id，所以直接停在攤開的情境設定上
+  panelLevel = 'edit';
+  settingsExpanded = true;
+  editingSlideId = null;
+  renderFlow();
+  setStatus(`已複製成「${copy.name}」（id：${copy.id}）——改個 id 與名字再開始編輯。`);
+}
+
+// 改 id ＝ **宣告「這是一個新情境」**，不是改個標籤。
+//
+// localStorage 靠 id 比對「自訂覆蓋內建」，所以換掉 id 之後：
+//   ① 本機那筆資料要跟著搬過去，不搬就變成孤兒，永遠躺在 localStorage 裡沒人看得到
+//   ② 舊 id 底下如果壓著一個內建情境，**那個內建情境會回到清單上**——它一直都在，
+//      只是被蓋住了。這是刻意的行為，但一定要講出來，否則使用者會以為自己多做了一個
+//
+// 這個動作同時就是「送修正 PR 還是新增 PR」的宣告（COO-102）：不改 id ＝ 我在修那個檔，
+// 改了 id ＝ 這是新東西。用「要不要換名字」去問一件教官答得出來的事，
+// 比另外做一個「這是修正還是新增」的開關好——那個開關他答不出來。
+function changeScenarioId(nextId) {
+  if (!currentScenario) return;
+  const from = currentScenario.id;
+  const to = String(nextId == null ? '' : nextId).trim();
+  if (to === from) return;
+
+  const taken = activeScenarios.filter(s => s.id !== from).map(s => s.id);
+  const problem = Scenarios.scenarioIdProblem(to, taken);
+  if (problem) {
+    setStatus(problem, true);
+    renderFlow();          // 把輸入框的值退回原本的 id，不要留著一個沒有生效的字串
+    return;
+  }
+
+  const custom = readCustomScenarios().filter(s => s.id !== from);
+  currentScenario.id = to;
+  custom.push(Scenarios.forExport([currentScenario])[0]);
+  writeCustomScenarios(Scenarios.normalizeScenarios(custom, DATA.options).scenarios);
+  buildScenarios();
+
+  currentScenario = activeScenarios.find(s => s.id === to) || currentScenario;
+  syncScenarioActive();
+  renderFlow();
+
+  // 重建之後舊 id 還在清單上，代表底下本來就壓著一個內建情境，現在它冒回來了
+  const revealed = activeScenarios.find(s => s.id === from);
+  setStatus(revealed
+    ? `id 已改成「${to}」，匯出與送 PR 的檔名都會是 ${to}.yaml。`
+      + `原本的「${revealed.name}」是內建情境，已經回到清單上。`
+    : `id 已改成「${to}」，匯出與送 PR 的檔名都會是 ${to}.yaml。`);
 }
 
 // 刪自訂＝真的消失；刪「覆蓋內建的那份」＝還原成內建，不是刪掉內建
@@ -1418,12 +1471,28 @@ function buildScenarioSettingsRow(doc) {
     medSel.value = currentScenario.medicalEvent;
     medSel.addEventListener('change', () => changeScenarioCondition({ medicalEvent: medSel.value }));
 
-    for (const [label, sel] of [['環境', envSel], ['急救事件', medSel]]) {
+    // id 排在最上面：它是這個情境的**身分**，不是設定。環境×急救事件回答「這是什麼情境」，
+    // id 回答「這是哪一個情境」——後者管檔名、管覆蓋比對，順序上該先看到。
+    const idInput = Object.assign(doc.createElement('input'), {
+      type: 'text', value: currentScenario.id, spellcheck: false,
+    });
+    idInput.setAttribute('autocapitalize', 'off');
+    // 用 change 而不是 input：邊打邊套用的話，打到一半的每一個字（h、ho、hom…）
+    // 都會變成一次改名，localStorage 會被灌滿孤兒
+    idInput.addEventListener('change', () => changeScenarioId(idInput.value));
+
+    for (const [label, sel] of [['id', idInput], ['環境', envSel], ['急救事件', medSel]]) {
       const field = doc.createElement('label');
       field.className = 'edit-field';
       field.append(Object.assign(doc.createElement('span'), { textContent: label }), sel);
       inner.appendChild(field);
     }
+    // 講清楚 id 會流到哪裡去。不寫的話，改它看起來只是換個標籤
+    inner.appendChild(Object.assign(doc.createElement('p'), {
+      className: 'settings-hint',
+      textContent: `匯出與送 PR 的檔名都會是 ${currentScenario.id}.yaml。`
+        + '只能用小寫英數字與連字號，換掉它等於變成另一個情境。',
+    }));
 
     // 整個情境的操作住在這裡。**受詞不必寫出來**——在情境設定的面板裡，
     // 「匯出」不會被讀成匯出這一頁。原本它們排在「＋ 新增頁」旁邊，
@@ -1431,6 +1500,9 @@ function buildScenarioSettingsRow(doc) {
     const actions = doc.createElement('div');
     actions.className = 'flow-actions settings-actions';
     actions.append(
+      // 複製排第一：它是「以這個為起點做一個自己的」，教官最常做的事。
+      // 內建情境刪不掉也改不動，複製是他唯一的入口
+      flowButton(doc, '複製', () => duplicateScenario(currentScenario)),
       flowButton(doc, '匯出', exportCurrentScenario),
       flowButton(doc, '貢獻', contributeCurrentScenario),
     );

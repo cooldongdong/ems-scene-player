@@ -412,6 +412,44 @@
     return { ...result, ok: true };
   }
 
+  // ---------- id ----------
+  // id 是這個情境的身分：localStorage 靠它比對「自訂覆蓋內建」，匯出與送 PR 靠它當檔名。
+  // 以前它只由程式產生（custom-1、custom-2），人改不到，於是那個既不描述內容、
+  // 又只在一台電腦裡唯一的字串一路流到了檔名——所以現在讓人改，也因此需要驗證。
+
+  const ID_PATTERN = /^[a-z][a-z0-9-]*$/;
+  const ID_MAX = 60;
+
+  /**
+   * id 有沒有問題。回傳 null＝可以用，否則回傳一句給人看的話。
+   * @param taken 已經被佔走的 id（其他情境、scenarios/ 裡的檔名）
+   */
+  function scenarioIdProblem(id, taken) {
+    const value = trimmed(id);
+    if (!value) return 'id 不能空白';
+    if (value.length > ID_MAX) return `id 太長了（最多 ${ID_MAX} 個字）`;
+    // 這條規則不是潔癖：id 會變成 scenarios/<id>.yaml 的檔名，也會進網址
+    if (!ID_PATTERN.test(value)) {
+      return 'id 只能用小寫英數字與連字號，且要以英文字母開頭（例：home-ohca-night）';
+    }
+    if (asArray(taken).includes(value)) return `id「${value}」已經有人用了`;
+    return null;
+  }
+
+  /**
+   * 複製時的新 id：從原本那個長出來，而不是回到 custom-N。
+   * `home-ohca` → `home-ohca-copy` → `home-ohca-copy-2`……
+   * 一眼看得出是從哪一個複製的，這在之後要送 PR 時特別有用。
+   */
+  function copyScenarioId(baseId, taken) {
+    const list = asArray(taken);
+    const base = `${trimmed(baseId) || 'scenario'}-copy`;
+    if (!list.includes(base)) return base;
+    let n = 2;
+    while (list.includes(`${base}-${n}`)) n++;
+    return `${base}-${n}`;
+  }
+
   // ---------- 貢獻（送 PR）----------
   // COO-86：讓不會 git 的教官把編好的情境送成 PR。走 GitHub 的「新增檔案」預填網址，
   // 開過去就是一個內容已經填好的網頁編輯器，按 "Propose new file" 就送出 PR——
@@ -695,6 +733,8 @@
     forExport,
     exportScenarioYaml,
     parseImport,
+    scenarioIdProblem,
+    copyScenarioId,
     contributionId,
     contributionUrl,
     migrateScenario,
