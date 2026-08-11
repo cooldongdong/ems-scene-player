@@ -316,9 +316,23 @@
     transition: opacity .18s ease, visibility 0s;
   }
   .volume-panel {
+    position: relative;
+    /* **display: flex 不能省。** input 預設是 inline 元素，會坐在文字基線上，
+       底下多出一截下緣間隙——於是細線離上緣與離下緣的距離不一樣。 */
+    display: flex;
     padding: 14px 12px; border-radius: 12px;
     background: var(--panel-2); border: 1px solid var(--line);
     box-shadow: 0 10px 24px rgba(0, 0, 0, .45);
+  }
+  /* 細軌道自己畫成一個元素，不是 input 的背景：背景圓不了角，而端點的圓角
+     正是它看起來像「一條軌道」而不是「一段色塊」的原因。
+     上下用 inset 對齊 panel 的 padding，所以它與 input 的可拖範圍完全重合。 */
+  .volume-panel::before {
+    content: ''; position: absolute; z-index: 0;
+    top: 14px; bottom: 14px; left: 50%; transform: translateX(-50%);
+    width: 5px; border-radius: 999px;
+    background: linear-gradient(to top,
+      var(--accent) var(--fill, 100%), rgba(255, 255, 255, .14) var(--fill, 100%));
   }
   /* **input 的寬度要等於軌道的寬度，不能更寬。**
      input 16px、軌道 5px 的時候，軌道靠著自己的框對齊、thumb 靠著 input 的框對齊，
@@ -327,20 +341,14 @@
   .volume-panel input[type=range] {
     -webkit-appearance: none; appearance: none;
     writing-mode: vertical-lr; direction: rtl;
+    display: block; position: relative; z-index: 1;
     width: 14px; height: 104px; margin: 0; padding: 0 6px;
     box-sizing: content-box; background: transparent; cursor: pointer;
   }
-  /* 自己畫軌道而不是靠 accent-color：原生那條又粗又鈍。
-     已填滿的部分用漸層畫（--fill 由 JS 隨值更新）——自訂軌道之後瀏覽器不會再
-     幫你填色，但「填到哪」正是音量最重要的訊息。
-     **軌道的框要跟 thumb 一樣寬（14px），看得見的細線用置中的背景畫。**
-     軌道 5px、thumb 14px 的時候，Chrome 讓兩者各自對齊自己的框，中心差 4.5px
-     ——圓點就會歪在線的旁邊。框一樣寬就不可能對不齊，不必用 magic margin 硬喬。 */
+  /* 原生軌道整個透明：看得見的那條由 .volume-panel::before 畫，
+     這裡只留下「可以拖」這件事。兩邊都畫的話，粗細與圓角會有兩個決定者。 */
   .volume-panel input[type=range]::-webkit-slider-runnable-track {
-    width: 14px; height: 100%;
-    background: linear-gradient(to top,
-      var(--accent) var(--fill, 100%), rgba(255, 255, 255, .14) var(--fill, 100%))
-      center / 5px 100% no-repeat;
+    width: 14px; height: 100%; background: transparent;
   }
   .volume-panel input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
@@ -2088,7 +2096,9 @@ function renderVolumeControl() {
   const shown = audioMuted ? 0 : masterVolume;
   const slider = $('volume-slider');
   slider.value = String(shown);
-  slider.style.setProperty('--fill', shown + '%');
+  // --fill 掛在最外層：畫線的是 .volume-panel::before，不是 input，
+  // 設在 input 上的話那個偽元素看不到（自訂屬性只往下繼承）
+  $('volume-control').style.setProperty('--fill', shown + '%');
 }
 
 function setVolume(value) {
