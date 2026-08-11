@@ -327,16 +327,20 @@
   .volume-panel input[type=range] {
     -webkit-appearance: none; appearance: none;
     writing-mode: vertical-lr; direction: rtl;
-    width: 5px; height: 104px; margin: 0; padding: 0 9px;
+    width: 14px; height: 104px; margin: 0; padding: 0 6px;
     box-sizing: content-box; background: transparent; cursor: pointer;
   }
   /* 自己畫軌道而不是靠 accent-color：原生那條又粗又鈍。
      已填滿的部分用漸層畫（--fill 由 JS 隨值更新）——自訂軌道之後瀏覽器不會再
-     幫你填色，但「填到哪」正是音量最重要的訊息。 */
+     幫你填色，但「填到哪」正是音量最重要的訊息。
+     **軌道的框要跟 thumb 一樣寬（14px），看得見的細線用置中的背景畫。**
+     軌道 5px、thumb 14px 的時候，Chrome 讓兩者各自對齊自己的框，中心差 4.5px
+     ——圓點就會歪在線的旁邊。框一樣寬就不可能對不齊，不必用 magic margin 硬喬。 */
   .volume-panel input[type=range]::-webkit-slider-runnable-track {
-    width: 5px; height: 100%; border-radius: 999px;
+    width: 14px; height: 100%;
     background: linear-gradient(to top,
-      var(--accent) var(--fill, 100%), rgba(255, 255, 255, .14) var(--fill, 100%));
+      var(--accent) var(--fill, 100%), rgba(255, 255, 255, .14) var(--fill, 100%))
+      center / 5px 100% no-repeat;
   }
   .volume-panel input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
