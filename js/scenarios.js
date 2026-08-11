@@ -62,7 +62,114 @@
       environments: flattenEnvironments(o.environment),
       medicalEvents: asArray(o.medicalEvent),
       complications: asArray(o.complication),
+      // 基準格式的版面寫在圖層自己身上，所以它**不該**出現在 layouts 裡；
+      // 分成兩個欄位是為了讓警告講得出差別（不認得 vs 不該寫在這裡）
+      projectionBaseId: projectionFormats(o)[0].id,
+      projectionOverrideIds: projectionFormats(o).slice(1).map(f => f.id),
     };
+  }
+
+  // ---------- 投影格式 ----------
+  // 同一個情境會投在不同形狀的螢幕上：教室是一般 16:9，訓練場是 270° 的超寬投影。
+  //
+  // **同一組座標在兩種螢幕上不會落在同一個地方。** x/y 是視窗寬高的百分比，
+  // 而 size 同時吃 vw 與 vh 取小的——在超寬螢幕上永遠被高度綁住，所以連「多大」
+  // 都會變。所以要存的是整組版面各一份，不是只有 x/y。
+  //
+  // 為什麼不做成兩個情境：兩者之間**只有座標不同**，slides、台詞、順序一個字都不差。
+  // 複製一份的代價是之後每改一句台詞都要記得改兩邊——那正是這個專案一路在消滅的
+  // 第二份真相。
+  //
+  // 格式清單放 options（全域），不是每個情境自己寫：「我們有哪些場地」是組織的性質，
+  // 不是某一場訓練的性質。沒宣告時退回下面這組預設，舊資料因此完全不受影響。
+  const DEFAULT_PROJECTION_FORMATS = [
+    { id: 'wide', name: '一般 16:9 螢幕', aspect: 16 / 9 },
+    { id: 'ultrawide', name: '270° 投影', aspect: 16 / 3 },
+  ];
+
+  /**
+   * 有哪些投影格式。**第一個是基準**——它的版面就寫在圖層自己身上（size/x/y），
+   * 其餘格式才寫進 layer.layouts。這樣現有的資料一個字都不用改。
+   */
+  function projectionFormats(options) {
+    const declared = asArray((options || {}).projection).filter(isObject);
+    const list = declared
+      .map(f => ({
+        id: trimmed(f.id),
+        name: trimmed(f.name) || trimmed(f.id),
+        aspect: Number(f.aspect),
+      }))
+      .filter(f => f.id && Number.isFinite(f.aspect) && f.aspect > 0);
+    return list.length ? list : DEFAULT_PROJECTION_FORMATS.map(f => ({ ...f }));
+  }
+
+  /** 基準格式的 id：它的版面直接寫在圖層上，不進 layouts */
+  function baseFormatId(options) {
+    return projectionFormats(options)[0].id;
+  }
+
+  /** 視窗長寬比最接近哪一個格式。現場沒有人會記得先切，所以由視窗自己說了算 */
+  function formatForAspect(options, aspect) {
+    const list = projectionFormats(options);
+    if (!Number.isFinite(aspect) || aspect <= 0) return list[0];
+    return list.reduce((best, f) =>
+      Math.abs(f.aspect - aspect) < Math.abs(best.aspect - aspect) ? f : best, list[0]);
+  }
+
+  // 覆寫表的正規化：只留認得的格式、認得的欄位，值一樣夾回範圍內。
+  // 空的覆寫（沒有任何欄位）直接丟掉，否則匯出檔會長出一堆 `ultrawide: {}`。
+  function layoutOverrides(raw, type, sets, where, warn) {
+    if (raw === undefined || raw === null) return {};
+    if (!isObject(raw)) {
+      warn(`${where} 的 layouts 不是物件，已跳過`);
+      return {};
+    }
+    const defaults = LAYER_DEFAULTS[type];
+    const out = {};
+    for (const [id, values] of Object.entries(raw)) {
+      // 基準格式不該出現在 layouts 裡——它的值就是圖層自己那一份，
+      // 寫進來就是同一件事有兩個地方可以講
+      if (id === sets.projectionBaseId) {
+        warn(`${where} 的 layouts 不該包含基準格式「${id}」（它的版面就寫在圖層上），已跳過`);
+        continue;
+      }
+      if (!sets.projectionOverrideIds.includes(id)) {
+        warn(`${where} 的 layouts 有不認得的投影格式「${id}」，已跳過`);
+        continue;
+      }
+      if (!isObject(values)) {
+        warn(`${where} 的 layouts.${id} 不是物件，已跳過`);
+        continue;
+      }
+      const one = {};
+      for (const key of Object.keys(defaults)) {
+        if (values[key] === undefined || values[key] === null) continue;
+        one[key] = clampField(values[key], key, defaults[key]);
+      }
+      if (Object.keys(one).length) out[id] = one;
+    }
+    return out;
+  }
+
+  /**
+   * 某個圖層在某個投影格式下的版面。**預覽、投影、編輯器都必須讀這一份。**
+   * 沒有覆寫的欄位退回圖層自己的值（也就是基準格式那一組）。
+   */
+  function layoutFor(layer, formatId) {
+    if (!layer) return null;
+    const defaults = LAYER_DEFAULTS[layer.type] || {};
+    const over = (isObject(layer.layouts) && layer.layouts[formatId]) || {};
+    const out = {};
+    for (const key of Object.keys(defaults)) {
+      out[key] = over[key] !== undefined ? over[key] : layer[key];
+    }
+    return out;
+  }
+
+  /** 這個圖層在這個格式下有沒有被調過——UI 要據此提示「這個格式還沒調」 */
+  function hasLayoutFor(layer, formatId) {
+    return !!(layer && isObject(layer.layouts) && isObject(layer.layouts[formatId])
+      && Object.keys(layer.layouts[formatId]).length);
   }
 
   // ---------- 推導 ----------
@@ -185,6 +292,12 @@
     for (const key of Object.keys(defaults)) {
       out[key] = clampField(layer[key], key, defaults[key]);
     }
+
+    // 其他投影格式的版面覆寫。**只存跟基準不一樣的那幾個值**（部分覆寫），
+    // 沒寫的欄位在讀的時候退回基準——那是刻意的：換算出來的位置哪裡都不對，
+    // 卻長得像有人調過，反而沒有人會回去修。
+    const layouts = layoutOverrides(layer.layouts, type, sets, where, warn);
+    if (Object.keys(layouts).length) out.layouts = layouts;
     return out;
   }
 
@@ -353,6 +466,11 @@
           const defaults = LAYER_DEFAULTS[layer.type] || {};
           for (const key of Object.keys(defaults)) {
             if (layer[key] !== undefined && layer[key] !== defaults[key]) l[key] = layer[key];
+          }
+          // 其他投影格式的覆寫原樣帶走（它本來就只存「真的調過的那幾個欄位」）
+          if (isObject(layer.layouts) && Object.keys(layer.layouts).length) {
+            l.layouts = Object.fromEntries(
+              Object.entries(layer.layouts).map(([id, v]) => [id, { ...v }]));
           }
           return l;
         });
@@ -721,6 +839,12 @@
     layerOf,
     layerVisible,
     textBoxStyle,
+    DEFAULT_PROJECTION_FORMATS,
+    projectionFormats,
+    baseFormatId,
+    formatForAspect,
+    layoutFor,
+    hasLayoutFor,
     BASE_ROLES,
     COMPLICATION_ROLES,
     optionSets,

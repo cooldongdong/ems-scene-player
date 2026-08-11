@@ -851,3 +851,122 @@ test('內建 7 組情境的每一頁都有 scene 與 patient', () => {
     }
   }
 });
+
+// ---------- 投影格式（COO-104）----------
+
+test('scenario-data.yaml 宣告的投影格式讀得出來，第一個是基準', () => {
+  const formats = S.projectionFormats(OPTIONS);
+  assert.ok(formats.length >= 2);
+  assert.equal(formats[0].id, S.baseFormatId(OPTIONS));
+  for (const f of formats) {
+    assert.ok(f.id && f.name, 'id 與 name 都要有');
+    assert.ok(Number.isFinite(f.aspect) && f.aspect > 0, `${f.id} 的 aspect 不是正數`);
+  }
+});
+
+// 整段刪掉要能退回內建的兩種，而不是變成沒有格式——沒有格式的話所有版面查詢都會炸
+test('沒宣告 projection 時退回內建格式，不會變成空清單', () => {
+  assert.deepEqual(S.projectionFormats({}), S.DEFAULT_PROJECTION_FORMATS);
+  assert.deepEqual(S.projectionFormats(undefined), S.DEFAULT_PROJECTION_FORMATS);
+  // 值不合法的整筆濾掉；全部不合法就退回內建
+  assert.deepEqual(S.projectionFormats({ projection: [{ id: '', aspect: 2 }, { id: 'x' }] }),
+    S.DEFAULT_PROJECTION_FORMATS);
+});
+
+test('投影視窗依自己的長寬比挑格式，挑最接近的那一個', () => {
+  assert.equal(S.formatForAspect(OPTIONS, 16 / 9).id, 'wide');
+  assert.equal(S.formatForAspect(OPTIONS, 5.4).id, 'ultrawide');
+  assert.equal(S.formatForAspect(OPTIONS, 3).id, 'wide', '3 離 1.778 比離 5.333 近');
+  assert.equal(S.formatForAspect(OPTIONS, NaN).id, 'wide', '量不到就用基準');
+});
+
+// **這是這張票的核心不變量**：沒調過的格式退回基準值，不是換算、不是預設值。
+// 換算出來的位置哪裡都不對，卻長得像有人調過，反而沒有人會回去修。
+test('沒有覆寫的格式，版面退回圖層自己那一份', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'patient', size: 40, x: 20, y: 30 }] }],
+  }], OPTIONS);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.deepEqual(S.layoutFor(layer, 'wide'), { size: 40, x: 20, y: 30 });
+  assert.deepEqual(S.layoutFor(layer, 'ultrawide'), { size: 40, x: 20, y: 30 });
+  assert.equal(S.hasLayoutFor(layer, 'ultrawide'), false);
+});
+
+test('覆寫是「部分」的：沒寫的欄位仍然退回基準', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', size: 40, x: 20, y: 30, layouts: { ultrawide: { x: 8 } } },
+    ] }],
+  }], OPTIONS);
+  assert.deepEqual(warnings, []);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.deepEqual(S.layoutFor(layer, 'ultrawide'), { size: 40, x: 8, y: 30 });
+  assert.deepEqual(S.layoutFor(layer, 'wide'), { size: 40, x: 20, y: 30 }, '基準不受影響');
+  assert.equal(S.hasLayoutFor(layer, 'ultrawide'), true);
+});
+
+test('layouts 裡不該出現基準格式——那是同一件事的第二個寫法', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', x: 20, layouts: { wide: { x: 90 } } },
+    ] }],
+  }], OPTIONS);
+  assert.match(warnings.join(''), /基準格式/);
+  assert.equal(S.layoutFor(S.layerOf(scenarios[0].slides[0], 'patient'), 'wide').x, 20);
+});
+
+test('不認得的投影格式與超出範圍的值都擋掉，不讓整層消失', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', layouts: { 亂寫: { x: 10 }, ultrawide: { x: 999, size: -5 } } },
+    ] }],
+  }], OPTIONS);
+  assert.match(warnings.join(''), /不認得的投影格式/);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.equal(layer.layouts.亂寫, undefined);
+  assert.equal(S.layoutFor(layer, 'ultrawide').x, S.LAYER_RANGES.x[1], '夾回上限');
+  assert.equal(S.layoutFor(layer, 'ultrawide').size, S.LAYER_RANGES.size[0], '夾回下限');
+});
+
+test('覆寫在匯出／匯入之間往返不變', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', size: 40, layouts: { ultrawide: { x: 8, size: 25 } } },
+    ] }],
+  }], OPTIONS);
+  const text = S.exportScenarioYaml(scenarios[0], yaml.dump);
+  assert.ok(text.includes('layouts:'));
+  const back = S.parseImport(text, OPTIONS, yaml.load);
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(
+    S.layoutFor(S.layerOf(back.scenarios[0].slides[0], 'patient'), 'ultrawide'),
+    { size: 25, x: 8, y: S.LAYER_DEFAULTS.patient.y });
+});
+
+// 空的覆寫要整個消失，否則匯出檔會長出一堆 `ultrawide: {}`，看起來像調過其實沒有
+test('空的覆寫不留在資料裡', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'patient', layouts: { ultrawide: {} } }] }],
+  }], OPTIONS);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.equal('layouts' in layer, false);
+  assert.equal(S.exportScenarioYaml(scenarios[0], yaml.dump).includes('layouts'), false);
+});
+
+test('現有的 7 組情境都還沒有任何格式覆寫（這次改動不動既有資料）', () => {
+  const { scenarios, warnings } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  assert.deepEqual(warnings, []);
+  for (const s of scenarios) {
+    for (const slide of s.slides) {
+      for (const layer of slide.layers) {
+        assert.equal('layouts' in layer, false, `${s.id}／${slide.id} 的 ${layer.type} 冒出了 layouts`);
+      }
+    }
+  }
+});
