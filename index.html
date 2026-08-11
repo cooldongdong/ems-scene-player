@@ -289,6 +289,25 @@
   /* 媒體池：實際發出聲音的地方。推到畫面外而不是 display:none／hidden——
      隱藏的 <video> 在部分瀏覽器不保證會播，而這裡的綠幕影片正是靠原聲發聲。 */
   #media-pool { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+  /* 音量。滑桿平常不佔位（絕對定位浮在按鈕上方），不然主控列會被撐開一截 */
+  .volume { position: relative; display: inline-flex; align-items: center; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 9px 12px; line-height: 0;
+  }
+  .icon-btn svg { width: 18px; height: 18px; display: block; }
+  .volume input[type=range] {
+    /* 靠右對齊而不是置中：這顆是主控列的最後一個，置中會讓滑桿有一半掉到面板外
+       （實測被切掉）。靠右貼著按鈕，不管面板多窄都留在裡面。 */
+    position: absolute; bottom: calc(100% + 8px); right: 0;
+    width: 118px; margin: 0; padding: 8px 10px; box-sizing: content-box;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+    accent-color: var(--accent);
+    opacity: 0; visibility: hidden; transition: opacity .12s;
+  }
+  .volume:hover input[type=range],
+  .volume:focus-within input[type=range] { opacity: 1; visibility: visible; }
+  .icon-btn.muted { color: #ff8f6b; border-color: #6b3524; }
 
 
   .field label.title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
@@ -627,6 +646,14 @@
       <div class="stage-bar" id="stage-bar">
         <button id="btn-project" disabled>開始投影</button>
         <button id="btn-play" disabled>播放環境音</button>
+        <!-- 音量：滑桿收在按鈕上方，hover 或鍵盤 focus 才浮出來。
+             兩者包在同一個容器裡，滑鼠從喇叭移到滑桿的路上不會經過容器外面，
+             否則滑桿會在半路消失。 -->
+        <div class="volume" id="volume-control">
+          <button id="btn-mute" type="button" class="icon-btn" aria-label="靜音"></button>
+          <input id="volume-slider" type="range" min="0" max="100" step="1"
+                 aria-label="音量" title="音量">
+        </div>
       </div>
     </section>
   </div>
@@ -1967,6 +1994,66 @@ function mediaKind(asset, file = assetPath(asset, assetFiles(asset)[0])) {
   return asset.type || 'audio';
 }
 
+// ---------- 音量 ----------
+// **所有聲音都從 #media-pool 出來**（環境音、突發狀況的配音與影片原聲），所以
+// 音量與靜音只要作用在那個容器上就涵蓋全部，不必逐一去找誰在響。
+//
+// 音量持存、靜音不持存：下次打開時「小聲」還原得回來是方便，「靜音」還原回來
+// 卻是災難——教官在台上按了半天沒聲音，而畫面上唯一的線索是一顆小圖示。
+// 寧可每次重開都會出聲。
+const VOLUME_KEY = 'ems-scene-player:volume';
+let masterVolume = (() => {
+  // **不能直接 Number()**：沒存過時 getItem 回 null，而 Number(null) 是 0，
+  // 0 又剛好落在 0–100 的合法範圍內——於是第一次打開就是靜音，
+  // 而畫面上唯一的線索是一顆小圖示。這個坑實測踩過。
+  const raw = localStorage.getItem(VOLUME_KEY);
+  if (raw === null) return 100;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : 100;
+})();
+let audioMuted = false;
+
+const SPEAKER_PATH = 'M4 9v6h3.2L12 19V5L7.2 9H4z';
+function speakerIcon(level, muted) {
+  const waves = muted ? '<path d="M16 9l5 6M21 9l-5 6"/>'
+    : (level > 55 ? '<path d="M15.5 8.5a5 5 0 010 7"/><path d="M18 6a8.5 8.5 0 010 12"/>'
+      : level > 0 ? '<path d="M15.5 8.5a5 5 0 010 7"/>' : '');
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="${SPEAKER_PATH}" fill="currentColor" stroke="none"/>${waves}</svg>`;
+}
+
+// el 省略＝套用到池裡全部；給了 el 就只套那一顆（新建時用）
+function applyVolume(el) {
+  const value = audioMuted ? 0 : masterVolume / 100;
+  const targets = el ? [el] : $('media-pool').querySelectorAll('audio, video');
+  targets.forEach(m => { m.volume = value; m.muted = audioMuted; });
+}
+
+function renderVolumeControl() {
+  const btn = $('btn-mute');
+  btn.innerHTML = speakerIcon(masterVolume, audioMuted || masterVolume === 0);
+  btn.classList.toggle('muted', audioMuted);
+  btn.setAttribute('aria-pressed', String(audioMuted));
+  btn.title = audioMuted ? '已靜音——按一下恢復' : `音量 ${masterVolume}%（按一下靜音）`;
+  $('volume-slider').value = String(masterVolume);
+}
+
+function setVolume(value) {
+  masterVolume = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  localStorage.setItem(VOLUME_KEY, String(masterVolume));
+  // 拉動滑桿等於「我要聽見」，所以順手解除靜音——不然拉半天沒聲音
+  if (masterVolume > 0) audioMuted = false;
+  applyVolume();
+  renderVolumeControl();
+}
+
+function toggleMute() {
+  audioMuted = !audioMuted;
+  applyVolume();
+  renderVolumeControl();
+}
+
 function absoluteAssetUrl(file) {
   try {
     return new URL(file, document.baseURI).href;
@@ -2590,6 +2677,7 @@ function poolMediaFor(asset) {
   el.preload = 'auto';
   el.loop = asset.role === 'ambient_sound';   // 環境聲音要撐滿全場，其餘播完就停
   $('media-pool').appendChild(el);
+  applyVolume(el);   // 新建的也要跟上，否則下一段聲音會用滿音量炸出來
   return el;
 }
 
@@ -2702,7 +2790,9 @@ const SPLIT_MIN = 22;      // 百分比。留下限，免得任一欄被拖到 0
 const SPLIT_MAX = 62;
 let splitPercent = (() => {
   const raw = Number(localStorage.getItem(SPLIT_KEY));
-  return Number.isFinite(raw) && raw >= SPLIT_MIN && raw <= SPLIT_MAX ? raw : 42;
+  // 預設左三右七：左欄是清單（窄一點就夠讀），右欄是預覽（這個工具的重點）。
+  // 調過的人不受影響——這個值一調就存 localStorage，只有沒調過的人吃預設。
+  return Number.isFinite(raw) && raw >= SPLIT_MIN && raw <= SPLIT_MAX ? raw : 30;
 })();
 
 function splitterColumns() {
@@ -3899,6 +3989,9 @@ document.addEventListener('keydown', handleFlowKey);
 
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', toggleAmbience);
+$('btn-mute').addEventListener('click', toggleMute);
+$('volume-slider').addEventListener('input', e => setVolume(e.target.value));
+renderVolumeControl();
 
 // 預覽裡的尺寸有兩項是「依舞台實際寬高算成 px 存下來的」（圖層的尺寸上限、
 // 舞台自己能有多大），視窗一改就過期。編輯畫面是固定一個視窗高的版面，
