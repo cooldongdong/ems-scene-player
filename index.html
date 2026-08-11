@@ -291,23 +291,30 @@
   #media-pool { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
   /* 音量。滑桿平常不佔位（絕對定位浮在按鈕上方），不然主控列會被撐開一截 */
   .volume { position: relative; display: inline-flex; align-items: center; }
+  /* 瀏覽模式是「確認這是不是我要的情境」，不是調音的地方——調音屬於編輯 */
+  .stage-bar.browse .volume { display: none; }
   .icon-btn {
     display: inline-flex; align-items: center; justify-content: center;
     padding: 9px 12px; line-height: 0;
   }
   .icon-btn svg { width: 18px; height: 18px; display: block; }
+  /* 直的滑桿：音量就是「高低」，橫的要在腦子裡轉一次。
+     writing-mode 直排 ＋ direction: rtl ＝ 下面是小聲、上面是大聲。
+     靠右對齊而不是置中：這顆是主控列的最後一個，置中會讓它掉到面板外（實測被切掉）。 */
   .volume input[type=range] {
-    /* 靠右對齊而不是置中：這顆是主控列的最後一個，置中會讓滑桿有一半掉到面板外
-       （實測被切掉）。靠右貼著按鈕，不管面板多窄都留在裡面。 */
     position: absolute; bottom: calc(100% + 8px); right: 0;
-    width: 118px; margin: 0; padding: 8px 10px; box-sizing: content-box;
+    writing-mode: vertical-lr; direction: rtl;
+    width: 22px; height: 108px; margin: 0; padding: 10px 8px; box-sizing: content-box;
     background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
     accent-color: var(--accent);
     opacity: 0; visibility: hidden; transition: opacity .12s;
   }
+  /* **只認滑鼠停留與鍵盤焦點，不認滑鼠點擊留下的焦點。**
+     用 :focus-within 的話，按一下喇叭之後焦點留在按鈕上，滑鼠移開了滑桿還掛在那裡
+     ——那不是 hover 該有的行為。:has(:focus-visible) 只有鍵盤操作才會成立。 */
   .volume:hover input[type=range],
-  .volume:focus-within input[type=range] { opacity: 1; visibility: visible; }
-  .icon-btn.muted { color: #ff8f6b; border-color: #6b3524; }
+  .volume:has(:focus-visible) input[type=range] { opacity: 1; visibility: visible; }
+  /* 靜音不換顏色：圖示本身（喇叭上打叉）已經說完了，再加一個紅框是同一件事講兩次 */
 
 
   .field label.title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
@@ -2033,7 +2040,6 @@ function applyVolume(el) {
 function renderVolumeControl() {
   const btn = $('btn-mute');
   btn.innerHTML = speakerIcon(masterVolume, audioMuted || masterVolume === 0);
-  btn.classList.toggle('muted', audioMuted);
   btn.setAttribute('aria-pressed', String(audioMuted));
   btn.title = audioMuted ? '已靜音——按一下恢復' : `音量 ${masterVolume}%（按一下靜音）`;
   $('volume-slider').value = String(masterVolume);
