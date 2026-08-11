@@ -515,6 +515,13 @@
   .preview-stage:hover .preview-nav { opacity: .85; }
   /* 投影格式分頁。長得像分頁而不是按鈕：它切換的是「你正在看哪一種螢幕」，
      不是一個會做事的動作。 */
+  /* 預設位置畫布的角標：預覽在這個狀態下顯示的不是某一頁，必須講出來 */
+  .preview-badge {
+    position: absolute; left: 8px; top: 8px; z-index: 4;
+    font-size: 11px; padding: 3px 9px; border-radius: 999px;
+    background: rgba(0,0,0,.66); color: var(--accent); border: 1px solid var(--accent);
+    pointer-events: none;
+  }
   .format-tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
   .format-tab {
     font-size: 12px; padding: 5px 12px; border-radius: 999px;
@@ -812,7 +819,7 @@ function loadLayoutFromSlide(slide) {
 // 不替 text 多開一個執行期物件，是因為那個物件唯一的用途就是「等一下再抄回圖層」——
 // 多一份就多一次抄漏的機會，而它連一幀都不需要被別人抓著參考。
 function previewLayoutTarget(type, comp, slide) {
-  if (type === 'patient') return patientOverlay;
+  if (type === 'patient') return editingDefaults() ? patientHomeSlot() : patientOverlay;
   if (type === 'greenscreen') return complicationOverlay(comp);
   // text 直接寫回儲存位置——而「哪個儲存位置」取決於目前是哪一個投影格式
   if (type === 'scene') return sceneFrameSlot();
@@ -824,6 +831,8 @@ let layoutSaveTimer = null;
 function persistLayerLayout(type, comp) {
   // 場景不是圖層版面，它住在情境層——拖曳時就地改了 sceneFrame，這裡只要存檔
   if (type === 'scene') { persistSceneFrame(); return; }
+  // 預設值畫布上動的是 patientHome，同樣住在情境層
+  if (type === 'patient' && editingDefaults()) { persistSceneFrame(); return; }
   const slide = currentSlide();
   const layer = slide && Scenarios.layerOf(slide, type);
   // 沒載入情境（直接按「產生情境」的臨時模式）就只在記憶體裡調，不寫進任何情境檔
@@ -1331,7 +1340,15 @@ function newLayer(type) {
   const layer = { type, ...Scenarios.LAYER_DEFAULTS[type] };
   // 病患站的位置由情境決定：新的一頁應該直接站在對的地方，而不是回到全域預設再拖一次
   if (type === 'patient' && currentScenario && currentScenario.patientHome) {
-    Object.assign(layer, currentScenario.patientHome);
+    const home = currentScenario.patientHome;
+    Object.keys(Scenarios.LAYER_DEFAULTS.patient).forEach(k => {
+      if (home[k] !== undefined) layer[k] = home[k];
+    });
+    // 覆寫一起帶走，新的一頁在**每一種格式**都站在對的地方，不只基準那個
+    if (home.layouts && Object.keys(home.layouts).length) {
+      layer.layouts = Object.fromEntries(
+        Object.entries(home.layouts).map(([id, v]) => [id, { ...v }]));
+    }
   }
   if (type === 'greenscreen') layer.complication = firstUsableComplication();
   if (type === 'text') layer.text = '說明文字';
@@ -1341,21 +1358,34 @@ function newLayer(type) {
 // 「歸位」對病患而言是回到**這個情境**的預設位置，不是全域預設——
 // 全域預設只是還沒有人設定過時的起點。
 function homeLayoutFor(type) {
-  if (type === 'patient' && currentScenario && currentScenario.patientHome) {
-    return currentScenario.patientHome;
+  // **要取目前格式的那一份。** 只取基準的話，在 270° 下按「歸位」會跳到 16:9 的
+  // 預設位置——在超寬螢幕上是錯的，而且會順手替 270° 建一筆不必要的覆寫。
+  if (type === 'patient' && currentScenario) {
+    return Scenarios.patientHomeFor(currentScenario, activeFormatId());
   }
   return Scenarios.LAYER_DEFAULTS[type];
 }
 
 // 把目前這一頁的病患位置，收成整個情境的預設。之後新增的頁都從這裡開始。
+// 這一頁的病患有沒有偏離預設（比的是**目前格式**生效的那兩份值）
+function patientMovedFromHome(layer) {
+  if (!layer || !currentScenario) return false;
+  const now = Scenarios.layoutFor(layer, activeFormatId());
+  const home = Scenarios.patientHomeFor(currentScenario, activeFormatId());
+  return Object.keys(Scenarios.LAYER_DEFAULTS.patient).some(k => now[k] !== home[k]);
+}
+
 function setPatientHomeFromCurrent() {
   const slide = editingSlide();
   const layer = slide && Scenarios.layerOf(slide, 'patient');
   if (!currentScenario || !layer) return;
-  currentScenario.patientHome = Object.fromEntries(
-    Object.keys(Scenarios.LAYER_DEFAULTS.patient).map(k => [k, layer[k]]));
+  // 讀**目前格式生效的那一份**，不是圖層的基準值：在 270° 下按這顆卻存進 16:9 的
+  // 數字，畫面上完全看不出來——這是加了投影格式之後才長出來的坑。
+  const from = Scenarios.layoutFor(layer, activeFormatId());
+  const slot = patientHomeSlot();
+  Object.keys(Scenarios.LAYER_DEFAULTS.patient).forEach(k => { slot[k] = from[k]; });
   persistScenarioEdit();
-  setStatus('已把這一頁的病患位置設為此情境的預設，之後新增的頁會從這裡開始。');
+  setStatus(`已把這一頁的病患位置設為「${activeFormatInfo().name}」的預設，之後新增的頁會從這裡開始。`);
 }
 
 function addLayer(type) {
@@ -3109,9 +3139,12 @@ function buildSlideBody(doc, slide) {
     // 只有病患有「歸位」與「設為預設」：它整場站同一個地方，所以情境層存得住一個預設。
     // 去背人物每一段站的位置本來就該各自調（這一段站左邊、下一段走近），
     // 沒有一個「原本的位置」可以回去——給它一顆歸位只會讓人以為自己弄壞了什麼。
-    if (layer.type === 'patient') {
+    // 而且**只在這一頁真的偏離預設時才出現**：沒動過的時候，「歸位」歸到原地、
+    // 「設為預設」把預設設成它自己，兩顆都是沒有效果的按鈕。常駐等於每一頁都掛著
+    // 兩顆雜訊，而預設位置本身現在有自己的地方可以編（展開情境設定）。
+    if (layer.type === 'patient' && patientMovedFromHome(layer)) {
       const home = flowButton(doc, '歸位', () => resetLayerLayout(layer.type));
-      home.title = '回到這個情境的病患預設位置';
+      home.title = `回到「${activeFormatInfo().name}」的病患預設位置`;
       const asHome = flowButton(doc, '設為預設', setPatientHomeFromCurrent);
       asHome.title = '把目前位置設為此情境的預設，之後新增的頁都從這裡開始';
       tools.append(home, asHome);
@@ -3226,16 +3259,30 @@ function sceneLayoutOf() {
   return currentScenario ? Scenarios.sceneFrameFor(currentScenario, activeFormatId()) : null;
 }
 
-// 場景框的儲存位置：基準格式就寫在 sceneFrame 上，其他格式寫進 sceneFrame.layouts[id]
-function sceneFrameSlot() {
+// 情境層版面（場景框、病患預設位置）在目前格式下的儲存位置。
+// 基準格式就寫在那個物件上，其他格式寫進它的 layouts[id]——與圖層同一套規則。
+function frameSlot(key, defaults) {
   if (!currentScenario) return null;
-  if (!currentScenario.sceneFrame) currentScenario.sceneFrame = { ...Scenarios.SCENE_FRAME_DEFAULTS };
-  const frame = currentScenario.sceneFrame;
+  if (!currentScenario[key]) currentScenario[key] = { ...defaults };
+  const frame = currentScenario[key];
   const fmt = activeFormatId();
   if (fmt === Scenarios.baseFormatId(DATA.options)) return frame;
   if (!frame.layouts) frame.layouts = {};
-  if (!frame.layouts[fmt]) frame.layouts[fmt] = Scenarios.sceneFrameFor(currentScenario, fmt);
+  if (!frame.layouts[fmt]) {
+    frame.layouts[fmt] = Object.fromEntries(
+      Object.keys(defaults).map(k => [k, frame[k] !== undefined ? frame[k] : defaults[k]]));
+  }
   return frame.layouts[fmt];
+}
+
+const sceneFrameSlot = () => frameSlot('sceneFrame', Scenarios.SCENE_FRAME_DEFAULTS);
+const patientHomeSlot = () => frameSlot('patientHome', Scenarios.LAYER_DEFAULTS.patient);
+
+// 展開「情境設定」時，預覽變成**預設位置的畫布**：顯示的不是某一頁，而是
+// 「新的一頁會長什麼樣」。以前 patientHome 沒有任何地方看得到，只能在某一頁按
+// 「設為預設」把它偷偷寫掉——一個局部按鈕改全域值。
+function editingDefaults() {
+  return panelLevel === 'edit' && settingsExpanded;
 }
 
 let sceneSaveTimer = null;
@@ -3262,7 +3309,10 @@ function placePreviewItem(item, layout, stage) {
 }
 
 function previewLayoutOf(slide, type) {
-  if (type === 'patient') return Scenarios.layerOf(slide, 'patient') ? patientOverlay : null;
+  if (type === 'patient') {
+    if (editingDefaults()) return Scenarios.patientHomeFor(currentScenario, activeFormatId());
+    return Scenarios.layerOf(slide, 'patient') ? patientOverlay : null;
+  }
   // text 沒有執行期物件，直接算出目前格式生效的那一份
   if (type === 'text') {
     const layer = Scenarios.layerOf(slide, 'text');
@@ -3462,6 +3512,24 @@ function buildPreview() {
   }
   else stage.appendChild(Object.assign(document.createElement('div'),
     { className: 'preview-empty', textContent: '這一頁沒有可預覽的場景素材' }));
+
+  if (editingDefaults()) {
+    // 這塊畫布顯示的不是某一頁，是「新的一頁會長什麼樣」。不畫綠幕人物與說明文字：
+    // 那些是逐頁的東西，出現在這裡只會讓人以為自己在改那一頁。
+    const img = previewImage(currentPatientPhotoAsset, '');
+    if (img) {
+      const item = previewItem('patient', img);
+      stage.appendChild(item);
+      const place = () => placePreviewItem(item, previewLayoutOf(slide, 'patient'), stage);
+      img.addEventListener('load', place, { once: true });
+      place();
+      makePreviewDraggable(item, 'patient', null, stage);
+    }
+    stage.appendChild(Object.assign(document.createElement('div'),
+      { className: 'preview-badge', textContent: `預設位置 · ${activeFormatInfo().name}` }));
+    wrap.appendChild(stage);
+    return wrap;
+  }
 
   const patient = Scenarios.layerOf(slide, 'patient');
   const patientImg = previewImage(layerAsset(patient, currentPatientPhotoAsset), '');

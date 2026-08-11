@@ -77,27 +77,41 @@
   const SCENE_FRAME_DEFAULTS = { size: 100, x: 50, y: 50 };
 
   /**
-   * 情境層的場景框。形狀刻意跟圖層一樣（基準欄位 ＋ layouts 覆寫），
-   * 所以 layoutFor 那一套完全共用，不必為它另寫一份合併規則。
+   * 情境層的一組版面（場景框、病患預設位置）。形狀刻意跟圖層一樣
+   * （基準欄位 ＋ layouts 覆寫），所以合併規則完全共用，不必各寫一份。
    */
-  function normalizeSceneFrame(raw, sets, where, warn) {
+  function normalizeFrame(raw, defaults, sets, where, warn) {
     const src = isObject(raw) ? raw : {};
-    const out = normalizeLayout(src, SCENE_FRAME_DEFAULTS);
-    const layouts = layoutOverridesFor(src.layouts, SCENE_FRAME_DEFAULTS, sets, `${where} 的場景框`, warn);
+    const out = normalizeLayout(src, defaults);
+    const layouts = layoutOverridesFor(src.layouts, defaults, sets, where, warn);
     if (Object.keys(layouts).length) out.layouts = layouts;
     return out;
   }
 
-  /** 場景在某個投影格式下的框。與圖層共用 layoutFor 的合併規則 */
-  function sceneFrameFor(scenario, formatId) {
-    const frame = (scenario && scenario.sceneFrame) || {};
-    const over = (isObject(frame.layouts) && frame.layouts[formatId]) || {};
+  /** 情境層版面在某個投影格式下的值。與圖層共用同一套「沒寫就退回基準」的規則 */
+  function frameFor(frame, defaults, formatId) {
+    const f = isObject(frame) ? frame : {};
+    const over = (isObject(f.layouts) && f.layouts[formatId]) || {};
     const out = {};
-    for (const key of Object.keys(SCENE_FRAME_DEFAULTS)) {
+    for (const key of Object.keys(defaults)) {
       out[key] = over[key] !== undefined ? over[key]
-        : (frame[key] !== undefined ? frame[key] : SCENE_FRAME_DEFAULTS[key]);
+        : (f[key] !== undefined ? f[key] : defaults[key]);
     }
     return out;
+  }
+
+  /** 場景在某個投影格式下的框 */
+  function sceneFrameFor(scenario, formatId) {
+    return frameFor(scenario && scenario.sceneFrame, SCENE_FRAME_DEFAULTS, formatId);
+  }
+
+  /**
+   * 病患在某個投影格式下的預設位置。
+   * **每個格式各一份**：16:9 調好的位置搬到 270° 上不會對——size 同時吃 vw 與 vh
+   * 取小的，在超寬螢幕上永遠被高度綁住，連「多大」都不一樣。
+   */
+  function patientHomeFor(scenario, formatId) {
+    return frameFor(scenario && scenario.patientHome, LAYER_DEFAULTS.patient, formatId);
   }
 
   // ---------- 投影格式 ----------
@@ -471,10 +485,12 @@
     // 病患在畫面上的預設位置，放情境層而不是每頁各自預設：同一場訓練裡病患不會換位置，
     // **新增一頁時應該直接站在對的地方**，而不是回到全域預設再手動拖一次。
     // 只影響「新的頁」與「歸位」——已存在的頁各自的值仍存在自己的圖層上，不會被追溯改動。
-    out.patientHome = normalizeLayout(scenario.patientHome, LAYER_DEFAULTS.patient);
+    out.patientHome = normalizeFrame(scenario.patientHome, LAYER_DEFAULTS.patient, sets,
+      `${where} 的病患預設位置`, warn);
     // 場景要框哪一塊是**整個情境**的事：一個情境只有一張背景，而「這個場地怎麼取景」
     // 每一頁都一樣。做成每頁可覆寫只會多出「預設 vs 偏離預設」一組狀態要維護。
-    out.sceneFrame = normalizeSceneFrame(scenario.sceneFrame, sets, where, warn);
+    out.sceneFrame = normalizeFrame(scenario.sceneFrame, SCENE_FRAME_DEFAULTS, sets,
+      `${where} 的場景框`, warn);
     return out;
   }
 
@@ -519,6 +535,20 @@
 
   // ---------- 匯出／匯入 ----------
 
+  // 情境層版面的匯出：跟預設完全一樣就不寫，維持「手改時只看到真的動過的東西」
+  function exportFrame(frame, defaults) {
+    const f = isObject(frame) ? frame : {};
+    const moved = Object.keys(defaults).some(k => f[k] !== defaults[k]);
+    const hasOverrides = isObject(f.layouts) && Object.keys(f.layouts).length;
+    if (!moved && !hasOverrides) return null;
+    const out = {};
+    for (const k of Object.keys(defaults)) out[k] = f[k] !== undefined ? f[k] : defaults[k];
+    if (hasOverrides) {
+      out.layouts = Object.fromEntries(Object.entries(f.layouts).map(([id, v]) => [id, { ...v }]));
+    }
+    return out;
+  }
+
   // 匯出前把執行期才有的欄位（source）拿掉，否則匯出檔會帶著上一台機器的來源標記
   function forExport(scenarios) {
     return asArray(scenarios).map(s => {
@@ -526,20 +556,10 @@
       if (s.note) out.note = s.note;
       if (s.ambience && s.ambience !== 'auto') out.ambience = s.ambience;
       // 跟全域預設一樣就不寫，維持「手改時只看到真的動過的東西」
-      const home = s.patientHome || {};
-      if (Object.keys(LAYER_DEFAULTS.patient).some(k => home[k] !== LAYER_DEFAULTS.patient[k])) {
-        out.patientHome = { ...home };
-      }
-      // 場景框同理：跟預設一樣就不寫，維持「手改時只看到真的動過的東西」
-      const frame = s.sceneFrame || {};
-      const framed = Object.keys(SCENE_FRAME_DEFAULTS).some(k => frame[k] !== SCENE_FRAME_DEFAULTS[k]);
-      if (framed || (isObject(frame.layouts) && Object.keys(frame.layouts).length)) {
-        out.sceneFrame = { ...frame };
-        if (isObject(frame.layouts)) {
-          out.sceneFrame.layouts = Object.fromEntries(
-            Object.entries(frame.layouts).map(([id, v]) => [id, { ...v }]));
-        }
-      }
+      const home = exportFrame(s.patientHome, LAYER_DEFAULTS.patient);
+      if (home) out.patientHome = home;
+      const frame = exportFrame(s.sceneFrame, SCENE_FRAME_DEFAULTS);
+      if (frame) out.sceneFrame = frame;
       out.slides = asArray(s.slides).map(slide => {
         const o = { id: slide.id, title: slide.title };
         // enabled: true 是預設值，不寫進匯出檔，讓人手改時看到的是最小差異
@@ -932,6 +952,7 @@
     sceneBoxStyle,
     SCENE_FRAME_DEFAULTS,
     sceneFrameFor,
+    patientHomeFor,
     DEFAULT_PROJECTION_FORMATS,
     projectionFormats,
     baseFormatId,
