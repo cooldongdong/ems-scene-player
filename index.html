@@ -1549,7 +1549,20 @@ function buildScenarioSettingsRow(doc) {
         // 修正模式塞不進預填（GitHub 忽略 /edit/ 的 ?value=），所以點下去時
         // 把新內容送進剪貼簿，讓人到那一頁貼上
         : flowLink(doc, '貢獻', target.url,
-            target.mode === 'edit' ? () => copyScenarioToClipboard(target.scenario) : null);
+            target.mode === 'edit' ? () => copyScenarioToClipboard(currentScenario) : null);
+      // **網址要在按下去的前一刻重算。**
+      // 它是 render 這一列時算好的，但情境之後還會被改——而拖曳人物位置只會在
+      // 400ms 後存檔，**不重繪這一列**。結果就是：拖好位置、按貢獻，送出去的卻是
+      // 「打開這個面板時」的那一份，位置全部不見，而且畫面上看不出哪裡不對。
+      // 加一頁、改備註同理。重算一次很便宜，算錯的代價是一個看起來成功的錯 PR。
+      if (!target.tooLong) {
+        const refresh = () => {
+          const now = contributionTarget(currentScenario);
+          if (!now.tooLong) link.href = now.url;
+        };
+        link.addEventListener('pointerdown', refresh);
+        link.addEventListener('click', refresh);   // 鍵盤 Enter 不會有 pointerdown
+      }
       // 送出去會發生什麼，滑過去就知道——「修正」與「新增」是兩件很不一樣的事，
       // 但按鈕上寫不下，寫下去也會變成第二種說法
       link.title = target.mode === 'edit'
@@ -1734,6 +1747,17 @@ function saveScenarioOverride(scenario) {
   writeCustomScenarios(
     Scenarios.normalizeScenarios(custom, DATA.options).scenarios);
   buildScenarios();
+
+  // **存完之後 source 就變了，但 currentScenario 不知道。**
+  // buildScenarios() 重建的是 activeScenarios 裡的新物件，currentScenario 還抱著
+  // 存檔前那一份——它的 source 永遠停在 'builtin'。於是「改了一個內建情境」之後，
+  // 貢獻仍然以為沒有任何修改而停用，要離開編輯畫面再進來才會對。
+  // 只同步 source 一個欄位，不整個換掉物件：flowSteps 抓著的是原本那些 slide 的參考，
+  // 換物件會讓編輯中的那一頁跟畫面對不上。
+  if (currentScenario && currentScenario.id === scenario.id) {
+    const fresh = activeScenarios.find(s => s.id === scenario.id);
+    if (fresh) currentScenario.source = fresh.source;
+  }
 }
 
 function intersects(list, picks) {
