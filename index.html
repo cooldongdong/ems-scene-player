@@ -715,7 +715,6 @@ function complicationOverlay(comp) {
 // text 沒有執行期物件（見 previewLayoutTarget），這裡列出來只是為了讓
 // persistLayerLayout 的迴圈對三種型別長得一樣——它對 text 是自己寫給自己。
 const LAYOUT_KEYS = {
-  scene: ['size', 'x', 'y'],
   patient: ['size', 'x', 'y'],
   greenscreen: ['size', 'x', 'y', 'tolerance'],
   text: ['size', 'x', 'y'],
@@ -819,12 +818,15 @@ function previewLayoutTarget(type, comp, slide) {
   if (type === 'patient') return patientOverlay;
   if (type === 'greenscreen') return complicationOverlay(comp);
   // text 直接寫回儲存位置——而「哪個儲存位置」取決於目前是哪一個投影格式
+  if (type === 'scene') return sceneFrameSlot();
   return layoutSlot(Scenarios.layerOf(slide || currentSlide(), type), activeFormatId());
 }
 
 // 拖滑桿會連續觸發，每一格都寫 localStorage 太重，收斂成一次
 let layoutSaveTimer = null;
 function persistLayerLayout(type, comp) {
+  // 場景不是圖層版面，它住在情境層——拖曳時就地改了 sceneFrame，這裡只要存檔
+  if (type === 'scene') { persistSceneFrame(); return; }
   const slide = currentSlide();
   const layer = slide && Scenarios.layerOf(slide, type);
   // 沒載入情境（直接按「產生情境」的臨時模式）就只在記憶體裡調，不寫進任何情境檔
@@ -2411,7 +2413,7 @@ function applyProjectionSceneBox() {
   const media = doc.querySelector('#projection-stage > img, #projection-stage > video');
   if (!media) return;
   const aspect = (projectionWindow.innerWidth || 0) / (projectionWindow.innerHeight || 1);
-  const place = () => applySceneBox(media, sceneLayoutOf(currentSlide()), aspect);
+  const place = () => applySceneBox(media, sceneLayoutOf(), aspect);
   place();
   media.addEventListener('load', place, { once: true });
   media.addEventListener('loadedmetadata', place, { once: true });
@@ -3223,9 +3225,28 @@ function applySceneBox(el, layout, stageAspect) {
   Object.assign(el.style, Scenarios.sceneBoxStyle(layout, mediaAspect(el), stageAspect));
 }
 
-function sceneLayoutOf(slide) {
-  const layer = Scenarios.layerOf(slide, 'scene');
-  return layer ? Scenarios.layoutFor(layer, activeFormatId()) : null;
+// 場景的框是**情境層**的（一個情境一張背景，取景每頁都一樣），所以跟 slide 無關
+function sceneLayoutOf() {
+  return currentScenario ? Scenarios.sceneFrameFor(currentScenario, activeFormatId()) : null;
+}
+
+// 場景框的儲存位置：基準格式就寫在 sceneFrame 上，其他格式寫進 sceneFrame.layouts[id]
+function sceneFrameSlot() {
+  if (!currentScenario) return null;
+  if (!currentScenario.sceneFrame) currentScenario.sceneFrame = { ...Scenarios.SCENE_FRAME_DEFAULTS };
+  const frame = currentScenario.sceneFrame;
+  const fmt = activeFormatId();
+  if (fmt === Scenarios.baseFormatId(DATA.options)) return frame;
+  if (!frame.layouts) frame.layouts = {};
+  if (!frame.layouts[fmt]) frame.layouts[fmt] = Scenarios.sceneFrameFor(currentScenario, fmt);
+  return frame.layouts[fmt];
+}
+
+let sceneSaveTimer = null;
+function persistSceneFrame() {
+  if (!currentScenario) return;
+  clearTimeout(sceneSaveTimer);
+  sceneSaveTimer = setTimeout(() => saveScenarioOverride(currentScenario), 400);
 }
 
 function placePreviewItem(item, layout, stage) {
@@ -3276,7 +3297,7 @@ function updatePreviewLayout() {
   if (!stage) return;
   const slide = (panelLevel === 'edit' && editingSlide()) || currentSlide();
   if (!slide) return;
-  applySceneBox(stage.querySelector('.preview-scene'), sceneLayoutOf(slide), activeFormatInfo().aspect);
+  applySceneBox(stage.querySelector('.preview-scene'), sceneLayoutOf(), activeFormatInfo().aspect);
   for (const type of ['patient', 'greenscreen', 'text']) {
     const item = stage.querySelector(`.preview-item[data-type="${type}"]`);
     placePreviewItem(item, previewLayoutOf(slide, type), stage);
@@ -3411,7 +3432,7 @@ function buildPreview() {
   const scene = previewImage(layerAsset(Scenarios.layerOf(slide, 'scene'), currentEnvironmentAsset), 'preview-scene');
   if (scene) {
     stage.appendChild(scene);
-    const place = () => applySceneBox(scene, sceneLayoutOf(slide), activeFormatInfo().aspect);
+    const place = () => applySceneBox(scene, sceneLayoutOf(), activeFormatInfo().aspect);
     place();                       // 已經在快取裡的圖，load 不會再觸發
     scene.addEventListener('load', place, { once: true });
     scene.addEventListener('loadedmetadata', place, { once: true });
@@ -3423,16 +3444,14 @@ function buildPreview() {
       scene.title = '拖曳決定看素材的哪一塊，滾輪縮放';
       makePreviewDraggable(scene, 'scene', null, stage);
       stage.addEventListener('wheel', e => {
-        const layer = Scenarios.layerOf(slide, 'scene');
-        if (!layer) return;
+        const slot = sceneFrameSlot();
+        if (!slot) return;
         e.preventDefault();
-        const slot = layoutSlot(layer, activeFormatId());
-        const next = slot.size + (e.deltaY < 0 ? 2 : -2);
         const [lo, hi] = Scenarios.LAYER_RANGES.size;
-        slot.size = Math.max(lo, Math.min(hi, next));
-        applySceneBox(scene, Scenarios.layoutFor(layer, activeFormatId()), activeFormatInfo().aspect);
+        slot.size = Math.max(lo, Math.min(hi, slot.size + (e.deltaY < 0 ? 2 : -2)));
+        applySceneBox(scene, sceneLayoutOf(), activeFormatInfo().aspect);
         applyProjectionSceneBox();
-        persistLayerLayout('scene');
+        persistSceneFrame();
       }, { passive: false });
     }
   }

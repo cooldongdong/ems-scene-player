@@ -34,12 +34,11 @@
   // 每種圖層的版面預設值。normalize 會補齊，forExport 只寫非預設值——
   // 否則每個情境檔都會被 size/x/y/tolerance 灌滿，手改時看不出哪裡真的動過。
   const LAYER_DEFAULTS = {
-    // 場景以前沒有版面欄位——它一直是滿版鋪底，沒有什麼好調的。
-    // 270° 投影打破了這件事：素材是 1.833:1，舞台是 5.33:1，用 cover 撐滿寬度之後
-    // 圖的高度是舞台的三倍，**只看得到中間三分之一**（招牌那一條，地面全被切掉）。
-    // size 100 = 剛好蓋滿（也就是今天的 cover，所以既有畫面完全不變），
-    // 往下調會縮小、露出更多整張圖（代價是邊緣留黑），x/y 決定看哪一塊。
-    scene: { size: 100, x: 50, y: 50 },
+    // 場景圖層沒有版面欄位：它只回答「這一頁有沒有背景」。
+    // **框哪一塊是情境層的事**（scenario.sceneFrame）——整個情境只有一張背景，
+    // 而「這個場地要框哪一塊」每一頁都一樣，做成每頁可覆寫只會多出一組
+    // 「預設 vs 偏離預設」的狀態要維護，而那個需求並不存在。
+    scene: {},
     patient: { size: 85, x: 50, y: 57 },
     greenscreen: { size: 70, x: 50, y: 55, tolerance: 40 },
     text: { size: 40, x: 50, y: 50 },
@@ -72,6 +71,33 @@
       projectionBaseId: projectionFormats(o)[0].id,
       projectionOverrideIds: projectionFormats(o).slice(1).map(f => f.id),
     };
+  }
+
+  // 場景框的預設：size 100 = 剛好蓋滿舞台（等同舊的 object-fit: cover）
+  const SCENE_FRAME_DEFAULTS = { size: 100, x: 50, y: 50 };
+
+  /**
+   * 情境層的場景框。形狀刻意跟圖層一樣（基準欄位 ＋ layouts 覆寫），
+   * 所以 layoutFor 那一套完全共用，不必為它另寫一份合併規則。
+   */
+  function normalizeSceneFrame(raw, sets, where, warn) {
+    const src = isObject(raw) ? raw : {};
+    const out = normalizeLayout(src, SCENE_FRAME_DEFAULTS);
+    const layouts = layoutOverridesFor(src.layouts, SCENE_FRAME_DEFAULTS, sets, `${where} 的場景框`, warn);
+    if (Object.keys(layouts).length) out.layouts = layouts;
+    return out;
+  }
+
+  /** 場景在某個投影格式下的框。與圖層共用 layoutFor 的合併規則 */
+  function sceneFrameFor(scenario, formatId) {
+    const frame = (scenario && scenario.sceneFrame) || {};
+    const over = (isObject(frame.layouts) && frame.layouts[formatId]) || {};
+    const out = {};
+    for (const key of Object.keys(SCENE_FRAME_DEFAULTS)) {
+      out[key] = over[key] !== undefined ? over[key]
+        : (frame[key] !== undefined ? frame[key] : SCENE_FRAME_DEFAULTS[key]);
+    }
+    return out;
   }
 
   // ---------- 投影格式 ----------
@@ -124,12 +150,15 @@
   // 覆寫表的正規化：只留認得的格式、認得的欄位，值一樣夾回範圍內。
   // 空的覆寫（沒有任何欄位）直接丟掉，否則匯出檔會長出一堆 `ultrawide: {}`。
   function layoutOverrides(raw, type, sets, where, warn) {
+    return layoutOverridesFor(raw, LAYER_DEFAULTS[type], sets, where, warn);
+  }
+
+  function layoutOverridesFor(raw, defaults, sets, where, warn) {
     if (raw === undefined || raw === null) return {};
     if (!isObject(raw)) {
       warn(`${where} 的 layouts 不是物件，已跳過`);
       return {};
     }
-    const defaults = LAYER_DEFAULTS[type];
     const out = {};
     for (const [id, values] of Object.entries(raw)) {
       // 基準格式不該出現在 layouts 裡——它的值就是圖層自己那一份，
@@ -216,7 +245,7 @@
    * @param stageAspect 舞台（預覽框或投影視窗）的寬÷高
    */
   function sceneBoxStyle(layout, imgAspect, stageAspect) {
-    const def = LAYER_DEFAULTS.scene;
+    const def = SCENE_FRAME_DEFAULTS;
     const num = (v, d) => (Number.isFinite(v) ? v : d);
     const f = num(layout && layout.size, def.size) / 100;
     const ia = Number.isFinite(imgAspect) && imgAspect > 0 ? imgAspect : 16 / 9;
@@ -429,6 +458,9 @@
     // **新增一頁時應該直接站在對的地方**，而不是回到全域預設再手動拖一次。
     // 只影響「新的頁」與「歸位」——已存在的頁各自的值仍存在自己的圖層上，不會被追溯改動。
     out.patientHome = normalizeLayout(scenario.patientHome, LAYER_DEFAULTS.patient);
+    // 場景要框哪一塊是**整個情境**的事：一個情境只有一張背景，而「這個場地怎麼取景」
+    // 每一頁都一樣。做成每頁可覆寫只會多出「預設 vs 偏離預設」一組狀態要維護。
+    out.sceneFrame = normalizeSceneFrame(scenario.sceneFrame, sets, where, warn);
     return out;
   }
 
@@ -483,6 +515,16 @@
       const home = s.patientHome || {};
       if (Object.keys(LAYER_DEFAULTS.patient).some(k => home[k] !== LAYER_DEFAULTS.patient[k])) {
         out.patientHome = { ...home };
+      }
+      // 場景框同理：跟預設一樣就不寫，維持「手改時只看到真的動過的東西」
+      const frame = s.sceneFrame || {};
+      const framed = Object.keys(SCENE_FRAME_DEFAULTS).some(k => frame[k] !== SCENE_FRAME_DEFAULTS[k]);
+      if (framed || (isObject(frame.layouts) && Object.keys(frame.layouts).length)) {
+        out.sceneFrame = { ...frame };
+        if (isObject(frame.layouts)) {
+          out.sceneFrame.layouts = Object.fromEntries(
+            Object.entries(frame.layouts).map(([id, v]) => [id, { ...v }]));
+        }
       }
       out.slides = asArray(s.slides).map(slide => {
         const o = { id: slide.id, title: slide.title };
@@ -874,6 +916,8 @@
     layerVisible,
     textBoxStyle,
     sceneBoxStyle,
+    SCENE_FRAME_DEFAULTS,
+    sceneFrameFor,
     DEFAULT_PROJECTION_FORMATS,
     projectionFormats,
     baseFormatId,
