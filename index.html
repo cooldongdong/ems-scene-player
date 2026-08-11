@@ -786,6 +786,24 @@ function layoutSlot(layer, formatId) {
 
 // 滑桿下方那行字要誠實：沒載入情境時調了不會被記住
 // 進到某一頁時，把該頁圖層上的版面搬進執行期物件（渲染程式讀的還是這兩個物件）
+/**
+ * 這一頁的病患在某個格式下實際該站的位置。
+ *
+ * **這一頁還沒替這個格式調過時，退回「這個情境在這個格式的預設」**，而不是退回
+ * 圖層的基準值——16:9 的座標放到 270° 上是錯的位置，而那正是切換格式後病患
+ * 沒有跳到對的地方、要按一次歸位才會對的原因。
+ *
+ * 基準格式不走這條：它的值就寫在圖層自己身上，本來就是對的。
+ */
+function patientLayoutOf(slide, fmt) {
+  const layer = Scenarios.layerOf(slide, 'patient');
+  if (!layer) return null;
+  if (fmt === Scenarios.baseFormatId(DATA.options) || Scenarios.hasLayoutFor(layer, fmt)) {
+    return Scenarios.layoutFor(layer, fmt);
+  }
+  return Scenarios.patientHomeFor(currentScenario, fmt);
+}
+
 function loadLayoutFromSlide(slide) {
   Object.assign(patientOverlay, PATIENT_OVERLAY_DEFAULTS);
   // **就地覆寫，不能 delete 再重建。** 投影的去背迴圈與預覽都抓著這兩個物件的參考
@@ -801,7 +819,7 @@ function loadLayoutFromSlide(slide) {
   // 有沒有 patient 圖層就是「要不要疊病患」——不需要另一個獨立的開關狀態
   patientOverlay.enabled = !!patient;
   if (patient) {
-    const layout = Scenarios.layoutFor(patient, fmt);
+    const layout = patientLayoutOf(slide, fmt);
     LAYOUT_KEYS.patient.forEach(k => { patientOverlay[k] = layout[k]; });
   }
 
@@ -1370,24 +1388,15 @@ function homeLayoutFor(type) {
 // 這一頁的病患有沒有偏離預設（比的是**目前格式**生效的那兩份值）
 function patientMovedFromHome(layer) {
   if (!layer || !currentScenario) return false;
-  const now = Scenarios.layoutFor(layer, activeFormatId());
+  const slide = editingSlide() || currentSlide();
+  const now = patientLayoutOf(slide, activeFormatId()) || Scenarios.layoutFor(layer, activeFormatId());
   const home = Scenarios.patientHomeFor(currentScenario, activeFormatId());
   return Object.keys(Scenarios.LAYER_DEFAULTS.patient).some(k => now[k] !== home[k]);
 }
 
-function setPatientHomeFromCurrent() {
-  const slide = editingSlide();
-  const layer = slide && Scenarios.layerOf(slide, 'patient');
-  if (!currentScenario || !layer) return;
-  // 讀**目前格式生效的那一份**，不是圖層的基準值：在 270° 下按這顆卻存進 16:9 的
-  // 數字，畫面上完全看不出來——這是加了投影格式之後才長出來的坑。
-  const from = Scenarios.layoutFor(layer, activeFormatId());
-  const slot = patientHomeSlot();
-  Object.keys(Scenarios.LAYER_DEFAULTS.patient).forEach(k => { slot[k] = from[k]; });
-  persistScenarioEdit();
-  setStatus(`已把這一頁的病患位置設為「${activeFormatInfo().name}」的預設，之後新增的頁會從這裡開始。`);
-}
-
+// 「設為預設」已經移除：預設位置在「情境設定」展開時的畫布上直接拖就好。
+// 留著它等於**同一件事有兩個入口**，而其中一個還是「在某一頁按一顆按鈕改全域值」——
+// 那正是當初讓 patientHome 變成隱形值的原因。
 function addLayer(type) {
   const slide = editingSlide();
   if (!slide) return;
@@ -3150,9 +3159,7 @@ function buildSlideBody(doc, slide) {
     if (layer.type === 'patient' && patientMovedFromHome(layer)) {
       const home = flowButton(doc, '歸位', () => resetLayerLayout(layer.type));
       home.title = `回到「${activeFormatInfo().name}」的病患預設位置`;
-      const asHome = flowButton(doc, '設為預設', setPatientHomeFromCurrent);
-      asHome.title = '把目前位置設為此情境的預設，之後新增的頁都從這裡開始';
-      tools.append(home, asHome);
+      tools.append(home);
     }
     // 場景與病患是每頁必備、由情境決定的，沒有刪除鍵；
     // 沒有上下鍵則是因為 z 順序由型別決定，投影視窗的 z-index 是寫死的
