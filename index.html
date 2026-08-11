@@ -460,7 +460,13 @@
     overflow: hidden; border-radius: 10px; background: #000;
     border: 1px solid var(--line); container-type: size;
   }
-  .preview-scene { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  /* 場景的框由 Scenarios.sceneBoxStyle() 以百分比寫在 style 上（COO-104）。
+     框的長寬比永遠等於素材本身，所以 object-fit 用 fill 也不會變形；
+     用 fill 是為了讓「框多大就畫多大」這件事只有一個決定者。 */
+  .preview-scene {
+    position: absolute; object-fit: fill;
+    transform: translate(-50%, -50%);
+  }
   /* 圖層外包一層：絕對定位且寬高 auto 會縮到內容大小，把手才貼得到真正的邊角。
      媒體的尺寸上限用 px 由 JS 依 stage 實際寬高算出——百分比在 shrink-to-fit
      的容器裡會變成循環參照，瀏覽器直接當成沒設。 */
@@ -709,6 +715,7 @@ function complicationOverlay(comp) {
 // text 沒有執行期物件（見 previewLayoutTarget），這裡列出來只是為了讓
 // persistLayerLayout 的迴圈對三種型別長得一樣——它對 text 是自己寫給自己。
 const LAYOUT_KEYS = {
+  scene: ['size', 'x', 'y'],
   patient: ['size', 'x', 'y'],
   greenscreen: ['size', 'x', 'y', 'tolerance'],
   text: ['size', 'x', 'y'],
@@ -762,6 +769,7 @@ function setActiveFormat(id) {
   applyPatientOverlayLayout();
   applyComplicationOverlayLayout();
   renderProjectionText(slide);
+  applyProjectionSceneBox();
 }
 
 function layoutSlot(layer, formatId) {
@@ -1953,14 +1961,14 @@ function projectionMarkup() {
     color: #fff;
     font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
   }
-  #projection-stage, #projection-stage > img, #projection-stage > video {
-    width: 100%; height: 100%;
-  }
+  #projection-stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  /* 場景的框由 Scenarios.sceneBoxStyle() 以百分比寫在 style 上，與預覽共用同一份
+     換算（COO-104）。以前這裡是 object-fit:cover 寫死——在 270° 的超寬視窗上，
+     cover 會把 1.833:1 的素材撐到三倍高，只剩中間一條看得見。 */
   #projection-stage > img, #projection-stage > video {
-    display: block;
-    border: 0;
-    object-fit: cover;
-    object-position: center;
+    position: absolute; display: block; border: 0;
+    object-fit: fill;
+    transform: translate(-50%, -50%);
     background: #000;
   }
   #projection-patient-layer {
@@ -2396,6 +2404,19 @@ function renderProjectionAsset(asset) {
   });
 }
 
+// 投影端的場景框。舞台就是視窗本身，所以長寬比用視窗的量。
+function applyProjectionSceneBox() {
+  const doc = projectionDocument();
+  if (!doc || !projectionWindow) return;
+  const media = doc.querySelector('#projection-stage > img, #projection-stage > video');
+  if (!media) return;
+  const aspect = (projectionWindow.innerWidth || 0) / (projectionWindow.innerHeight || 1);
+  const place = () => applySceneBox(media, sceneLayoutOf(currentSlide()), aspect);
+  place();
+  media.addEventListener('load', place, { once: true });
+  media.addEventListener('loadedmetadata', place, { once: true });
+}
+
 function renderProjectionScene() {
   if (!projectionWindow || projectionWindow.closed) return;
   if (currentEnvironmentAsset) {
@@ -2406,6 +2427,7 @@ function renderProjectionScene() {
     showProjectionMessage(doc, '這個情境沒有可投影的環境素材。');
   }
   renderProjectionPatient();
+  applyProjectionSceneBox();
 }
 
 function openProjection() {
@@ -3187,6 +3209,25 @@ function previewGreenscreen(layer, canvas) {
 
 // size 是「可佔畫面的百分比」，投影端用 vw/vh。預覽的 stage 不是視窗大小，
 // 所以要換算成 px；百分比放在 shrink-to-fit 的外層裡會被瀏覽器當成沒設。
+// 場景鋪底的框。預覽與投影共用同一份換算（Scenarios.sceneBoxStyle），差別只在
+// 「舞台是誰」——預覽是那個框，投影是整個視窗。
+// 素材的長寬比要等它載完才知道，所以 load 之後要再套一次。
+function mediaAspect(el) {
+  const w = el.naturalWidth || el.videoWidth || 0;
+  const h = el.naturalHeight || el.videoHeight || 0;
+  return h > 0 ? w / h : NaN;
+}
+
+function applySceneBox(el, layout, stageAspect) {
+  if (!el) return;
+  Object.assign(el.style, Scenarios.sceneBoxStyle(layout, mediaAspect(el), stageAspect));
+}
+
+function sceneLayoutOf(slide) {
+  const layer = Scenarios.layerOf(slide, 'scene');
+  return layer ? Scenarios.layoutFor(layer, activeFormatId()) : null;
+}
+
 function placePreviewItem(item, layout, stage) {
   if (!item || !layout) return;
   item.style.left = layout.x + '%';
@@ -3235,6 +3276,7 @@ function updatePreviewLayout() {
   if (!stage) return;
   const slide = (panelLevel === 'edit' && editingSlide()) || currentSlide();
   if (!slide) return;
+  applySceneBox(stage.querySelector('.preview-scene'), sceneLayoutOf(slide), activeFormatInfo().aspect);
   for (const type of ['patient', 'greenscreen', 'text']) {
     const item = stage.querySelector(`.preview-item[data-type="${type}"]`);
     placePreviewItem(item, previewLayoutOf(slide, type), stage);
@@ -3286,9 +3328,11 @@ function makePreviewDraggable(item, type, comp, stage) {
         l.x = clamp(from.x + (e.clientX - origin.x) / rect.width * 100, ...Scenarios.LAYER_RANGES.x);
         l.y = clamp(from.y + (e.clientY - origin.y) / rect.height * 100, ...Scenarios.LAYER_RANGES.y);
       }
-      placePreviewItem(item, l, stage);
+      if (type === 'scene') applySceneBox(item, l, activeFormatInfo().aspect);
+      else placePreviewItem(item, l, stage);
       // 投影要即時跟著動，教官才看得到自己在調什麼
-      if (type === 'text') renderProjectionText(currentSlide());
+      if (type === 'scene') applyProjectionSceneBox();
+      else if (type === 'text') renderProjectionText(currentSlide());
       else if (type === 'patient') applyPatientOverlayLayout();
       else applyComplicationOverlayLayout();
     };
@@ -3360,14 +3404,40 @@ function buildPreview() {
   // 兩個地方都要：aspect-ratio 給舞台自己，另一份給上面那條「塞得進這個框」的算式
   stage.style.setProperty('--stage-aspect', String(activeFormatInfo().aspect));
 
-  const scene = previewImage(layerAsset(Scenarios.layerOf(slide, 'scene'), currentEnvironmentAsset), 'preview-scene');
-  if (scene) stage.appendChild(scene);
-  else stage.appendChild(Object.assign(document.createElement('div'),
-    { className: 'preview-empty', textContent: '這一頁沒有可預覽的場景素材' }));
-
   // 瀏覽模式只是「確認這是不是我要的情境」，不該能改東西——編輯進去才給拖
   const editable = panelLevel !== 'browse';
   if (!editable) stage.classList.add('preview-locked');
+
+  const scene = previewImage(layerAsset(Scenarios.layerOf(slide, 'scene'), currentEnvironmentAsset), 'preview-scene');
+  if (scene) {
+    stage.appendChild(scene);
+    const place = () => applySceneBox(scene, sceneLayoutOf(slide), activeFormatInfo().aspect);
+    place();                       // 已經在快取裡的圖，load 不會再觸發
+    scene.addEventListener('load', place, { once: true });
+    scene.addEventListener('loadedmetadata', place, { once: true });
+    // 背景可以拖（決定看素材的哪一塊）與滾輪縮放（決定看多大一塊）。
+    // 沒有做成 .preview-item 是因為它不是疊在畫面上的東西，是畫面本身——
+    // 給它一個縮放手把會跟病患的手把長得一樣，但意義完全不同。
+    if (editable) {
+      scene.style.cursor = 'grab';
+      scene.title = '拖曳決定看素材的哪一塊，滾輪縮放';
+      makePreviewDraggable(scene, 'scene', null, stage);
+      stage.addEventListener('wheel', e => {
+        const layer = Scenarios.layerOf(slide, 'scene');
+        if (!layer) return;
+        e.preventDefault();
+        const slot = layoutSlot(layer, activeFormatId());
+        const next = slot.size + (e.deltaY < 0 ? 2 : -2);
+        const [lo, hi] = Scenarios.LAYER_RANGES.size;
+        slot.size = Math.max(lo, Math.min(hi, next));
+        applySceneBox(scene, Scenarios.layoutFor(layer, activeFormatId()), activeFormatInfo().aspect);
+        applyProjectionSceneBox();
+        persistLayerLayout('scene');
+      }, { passive: false });
+    }
+  }
+  else stage.appendChild(Object.assign(document.createElement('div'),
+    { className: 'preview-empty', textContent: '這一頁沒有可預覽的場景素材' }));
 
   const patient = Scenarios.layerOf(slide, 'patient');
   const patientImg = previewImage(layerAsset(patient, currentPatientPhotoAsset), '');

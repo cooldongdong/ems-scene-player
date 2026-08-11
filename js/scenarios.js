@@ -34,7 +34,12 @@
   // 每種圖層的版面預設值。normalize 會補齊，forExport 只寫非預設值——
   // 否則每個情境檔都會被 size/x/y/tolerance 灌滿，手改時看不出哪裡真的動過。
   const LAYER_DEFAULTS = {
-    scene: {},
+    // 場景以前沒有版面欄位——它一直是滿版鋪底，沒有什麼好調的。
+    // 270° 投影打破了這件事：素材是 1.833:1，舞台是 5.33:1，用 cover 撐滿寬度之後
+    // 圖的高度是舞台的三倍，**只看得到中間三分之一**（招牌那一條，地面全被切掉）。
+    // size 100 = 剛好蓋滿（也就是今天的 cover，所以既有畫面完全不變），
+    // 往下調會縮小、露出更多整張圖（代價是邊緣留黑），x/y 決定看哪一塊。
+    scene: { size: 100, x: 50, y: 50 },
     patient: { size: 85, x: 50, y: 57 },
     greenscreen: { size: 70, x: 50, y: 55, tolerance: 40 },
     text: { size: 40, x: 50, y: 50 },
@@ -194,6 +199,35 @@
       left: num(layer.x, def.x) + '%',
       top: num(layer.y, def.y) + '%',
       fontSize: num(layer.size, def.size) / 10 + unit,
+    };
+  }
+
+  /**
+   * 場景鋪底的框。**預覽與投影共用這一份**（跟 textBoxStyle 同樣的理由：
+   * 兩邊各寫一次的話，拖出來的位置跟投影對不上，而且沒有任何地方會報錯）。
+   *
+   * 全部用百分比，不碰像素：舞台被拖寬、視窗被縮放都不必重算。
+   *
+   * `size: 100` 定義成「剛好蓋滿舞台」（等同 object-fit: cover），所以
+   * **既有資料的畫面一個像素都不會變**——這一點比模型漂不漂亮重要，
+   * 素材是 1.833:1 而不是剛好 16:9，改用 contain 當基準會讓現有情境冒出黑邊。
+   *
+   * @param imgAspect 素材本身的寬÷高
+   * @param stageAspect 舞台（預覽框或投影視窗）的寬÷高
+   */
+  function sceneBoxStyle(layout, imgAspect, stageAspect) {
+    const def = LAYER_DEFAULTS.scene;
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+    const f = num(layout && layout.size, def.size) / 100;
+    const ia = Number.isFinite(imgAspect) && imgAspect > 0 ? imgAspect : 16 / 9;
+    const sa = Number.isFinite(stageAspect) && stageAspect > 0 ? stageAspect : 16 / 9;
+    // cover 由哪一邊決定：舞台比素材寬，就是寬度說了算（高度會溢出被切掉）
+    const widthLimited = sa >= ia;
+    return {
+      width: (widthLimited ? f * 100 : f * 100 * (ia / sa)) + '%',
+      height: (widthLimited ? f * 100 * (sa / ia) : f * 100) + '%',
+      left: num(layout && layout.x, def.x) + '%',
+      top: num(layout && layout.y, def.y) + '%',
     };
   }
 
@@ -839,6 +873,7 @@
     layerOf,
     layerVisible,
     textBoxStyle,
+    sceneBoxStyle,
     DEFAULT_PROJECTION_FORMATS,
     projectionFormats,
     baseFormatId,

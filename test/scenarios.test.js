@@ -171,7 +171,8 @@ test('版面值省略時補預設，且只補該型別有的欄位', () => {
     ] }],
   }], OPTIONS);
   const [scene, patient, green] = scenarios[0].slides[0].layers;
-  assert.deepEqual(scene, { type: 'scene' });                    // 場景滿版，沒有位置欄位
+  // 場景以前沒有位置欄位；270° 之後它也要能調（size 100 = 剛好蓋滿，等同舊的 cover）
+  assert.deepEqual(scene, { type: 'scene', ...S.LAYER_DEFAULTS.scene });
   assert.deepEqual(patient, { type: 'patient', ...S.LAYER_DEFAULTS.patient });
   assert.equal(green.tolerance, S.LAYER_DEFAULTS.greenscreen.tolerance);
 });
@@ -968,5 +969,44 @@ test('現有的 7 組情境都還沒有任何格式覆寫（這次改動不動�
         assert.equal('layouts' in layer, false, `${s.id}／${slide.id} 的 ${layer.type} 冒出了 layouts`);
       }
     }
+  }
+});
+
+// ---------- 場景鋪底的框（COO-104）----------
+
+// **size:100 必須等於舊的 cover**，否則既有情境的畫面會變。素材是 1.833:1 而不是
+// 剛好 16:9，所以這條不是形式檢查——改用 contain 當基準就會冒出黑邊。
+test('size 100 在 16:9 舞台上等於 cover：短邊剛好填滿，長邊溢出', () => {
+  const box = S.sceneBoxStyle({ size: 100, x: 50, y: 50 }, 1.833, 16 / 9);
+  // 舞台(1.778)比素材(1.833)窄 → 由高度決定，寬度溢出
+  assert.equal(box.height, '100%');
+  assert.equal(parseFloat(box.width) > 100, true, '寬度要溢出才會被切掉');
+  assert.equal(box.left, '50%');
+  assert.equal(box.top, '50%');
+});
+
+test('超寬舞台上，size 100 會讓圖高溢出成三倍——這就是只看得到中間三分之一的原因', () => {
+  const box = S.sceneBoxStyle({ size: 100, x: 50, y: 50 }, 1.833, 16 / 3);
+  assert.equal(box.width, '100%');
+  assert.ok(Math.abs(parseFloat(box.height) - (16 / 3) / 1.833 * 100) < 0.5);
+  assert.ok(parseFloat(box.height) > 280, '高度是舞台的近三倍');
+});
+
+test('把 size 調到讓高度剛好等於舞台，整張圖就看得完（代價是左右留黑）', () => {
+  const full = 1.833 / (16 / 3) * 100;          // ≈ 34.4
+  const box = S.sceneBoxStyle({ size: full, x: 50, y: 50 }, 1.833, 16 / 3);
+  assert.ok(Math.abs(parseFloat(box.height) - 100) < 0.5, '高度剛好填滿');
+  assert.ok(parseFloat(box.width) < 40, '寬度只剩三分之一，兩側是黑的');
+});
+
+test('x／y 就是焦點：決定看素材的哪一塊', () => {
+  const box = S.sceneBoxStyle({ size: 100, x: 20, y: 80 }, 1.833, 16 / 3);
+  assert.equal(box.left, '20%');
+  assert.equal(box.top, '80%');
+});
+
+test('缺值與壞值都退回預設，不會算出 NaN%', () => {
+  for (const box of [S.sceneBoxStyle(null, NaN, NaN), S.sceneBoxStyle({}, 0, -1)]) {
+    for (const v of Object.values(box)) assert.ok(!/NaN/.test(v), v);
   }
 });
