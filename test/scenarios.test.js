@@ -981,8 +981,9 @@ test('size 100 在 16:9 舞台上等於 cover：短邊剛好填滿，長邊溢�
   // 舞台(1.778)比素材(1.833)窄 → 由高度決定，寬度溢出
   assert.equal(box.height, '100%');
   assert.equal(parseFloat(box.width) > 100, true, '寬度要溢出才會被切掉');
-  assert.equal(box.left, '50%');
-  assert.equal(box.top, '50%');
+  // 置中：左右溢出的量相等
+  assert.ok(Math.abs(parseFloat(box.left) - (100 - parseFloat(box.width)) / 2) < 0.001);
+  assert.ok(Math.abs(parseFloat(box.top) - (100 - parseFloat(box.height)) / 2) < 0.001);
 });
 
 test('超寬舞台上，size 100 會讓圖高溢出成三倍——這就是只看得到中間三分之一的原因', () => {
@@ -999,10 +1000,33 @@ test('把 size 調到讓高度剛好等於舞台，整張圖就看得完（代�
   assert.ok(parseFloat(box.width) < 40, '寬度只剩三分之一，兩側是黑的');
 });
 
-test('x／y 就是焦點：決定看素材的哪一塊', () => {
-  const box = S.sceneBoxStyle({ size: 100, x: 20, y: 80 }, 1.833, 16 / 3);
-  assert.equal(box.left, '20%');
-  assert.equal(box.top, '80%');
+// **x／y 是對齊比例，不是中心點。** 一開始寫成中心點，結果背景放大之後中心點會
+// 跑到畫面外，而 x／y 夾在 0–100，於是圖的底邊永遠拉不到舞台底邊——差的那 45%
+// 不是範圍不夠大，是模型用錯了。對齊比例的好處是它自己跟著縮放調整。
+test('y=0 貼齊上緣、y=100 貼齊下緣，不管放多大都推得到底', () => {
+  const top = S.sceneBoxStyle({ size: 100, x: 50, y: 0 }, 1.833, 16 / 3);
+  assert.equal(top.top, '0%', 'y=0 圖的上緣對齊舞台上緣');
+
+  const bottom = S.sceneBoxStyle({ size: 100, x: 50, y: 100 }, 1.833, 16 / 3);
+  const h = parseFloat(bottom.height);
+  // 圖的底邊 = top + height，要剛好落在舞台底邊（100%）
+  assert.ok(Math.abs(parseFloat(bottom.top) + h - 100) < 0.001,
+    `底邊落在 ${(parseFloat(bottom.top) + h).toFixed(2)}%，不是 100%`);
+  assert.ok(parseFloat(bottom.top) < -100, '放大時左上角會在畫面外，那是正常的');
+});
+
+test('y=50 就是置中，所以既有資料（預設 50）的畫面完全不變', () => {
+  const box = S.sceneBoxStyle({ size: 100, x: 50, y: 50 }, 1.833, 16 / 3);
+  const h = parseFloat(box.height);
+  assert.ok(Math.abs(parseFloat(box.top) - (100 - h) / 2) < 0.001);
+});
+
+// 縮小到比舞台小的時候（左右留黑）同一個模型仍然成立
+test('縮小時 x=0 貼左、x=100 貼右', () => {
+  const left = S.sceneBoxStyle({ size: 34, x: 0, y: 50 }, 1.833, 16 / 3);
+  const right = S.sceneBoxStyle({ size: 34, x: 100, y: 50 }, 1.833, 16 / 3);
+  assert.equal(left.left, '0%');
+  assert.ok(Math.abs(parseFloat(right.left) + parseFloat(right.width) - 100) < 0.001);
 });
 
 test('缺值與壞值都退回預設，不會算出 NaN%', () => {

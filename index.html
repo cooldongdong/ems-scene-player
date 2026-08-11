@@ -463,10 +463,7 @@
   /* 場景的框由 Scenarios.sceneBoxStyle() 以百分比寫在 style 上（COO-104）。
      框的長寬比永遠等於素材本身，所以 object-fit 用 fill 也不會變形；
      用 fill 是為了讓「框多大就畫多大」這件事只有一個決定者。 */
-  .preview-scene {
-    position: absolute; object-fit: fill;
-    transform: translate(-50%, -50%);
-  }
+  .preview-scene { position: absolute; object-fit: fill; }
   /* 圖層外包一層：絕對定位且寬高 auto 會縮到內容大小，把手才貼得到真正的邊角。
      媒體的尺寸上限用 px 由 JS 依 stage 實際寬高算出——百分比在 shrink-to-fit
      的容器裡會變成循環參照，瀏覽器直接當成沒設。 */
@@ -1970,7 +1967,6 @@ function projectionMarkup() {
   #projection-stage > img, #projection-stage > video {
     position: absolute; display: block; border: 0;
     object-fit: fill;
-    transform: translate(-50%, -50%);
     background: #000;
   }
   #projection-patient-layer {
@@ -3330,6 +3326,7 @@ function makePreviewDraggable(item, type, comp, stage) {
     event.preventDefault();
     event.stopPropagation();
     const rect = stage.getBoundingClientRect();
+    const box = item.getBoundingClientRect();   // 背景要用它換算「一像素等於幾 %」
     const from = { ...layout() };
     const centre = { x: rect.left + rect.width * from.x / 100, y: rect.top + rect.height * from.y / 100 };
     const startDist = Math.hypot(event.clientX - centre.x, event.clientY - centre.y) || 1;
@@ -3345,6 +3342,14 @@ function makePreviewDraggable(item, type, comp, stage) {
       if (mode === 'resize') {
         const dist = Math.hypot(e.clientX - centre.x, e.clientY - centre.y);
         l.size = clamp(from.size * (dist / startDist), ...Scenarios.LAYER_RANGES.size);
+      } else if (type === 'scene') {
+        // 背景的 x／y 是**對齊比例**不是中心點，所以一個像素值多少 % 取決於
+        // 「圖比舞台大多少」——圖越大，同樣拖一段距離對應的比例越小。
+        // 放大時分母是負的，剛好把方向轉正（往下拖 = 看更下面 = 對齊比例變小）。
+        const dx = rect.width - box.width;
+        const dy = rect.height - box.height;
+        if (dx) l.x = clamp(from.x + (e.clientX - origin.x) / dx * 100, ...Scenarios.LAYER_RANGES.x);
+        if (dy) l.y = clamp(from.y + (e.clientY - origin.y) / dy * 100, ...Scenarios.LAYER_RANGES.y);
       } else {
         l.x = clamp(from.x + (e.clientX - origin.x) / rect.width * 100, ...Scenarios.LAYER_RANGES.x);
         l.y = clamp(from.y + (e.clientY - origin.y) / rect.height * 100, ...Scenarios.LAYER_RANGES.y);

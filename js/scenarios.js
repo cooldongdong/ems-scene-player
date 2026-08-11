@@ -241,6 +241,18 @@
    * **既有資料的畫面一個像素都不會變**——這一點比模型漂不漂亮重要，
    * 素材是 1.833:1 而不是剛好 16:9，改用 contain 當基準會讓現有情境冒出黑邊。
    *
+   * **x／y 不是中心點，是對齊比例**（跟 CSS 的 background-position 同一個模型）：
+   * 0 = 貼齊上／左緣，100 = 貼齊下／右緣，50 = 置中。
+   *
+   * 一開始寫成「中心點落在 x%／y%」，那對疊在畫面上的人物是對的，對鋪底的背景是錯的：
+   * 背景放大之後**它的中心點本來就會跑到畫面外**，而 x／y 夾在 0–100，於是圖的底邊
+   * 永遠拉不到舞台底邊。270° 下 size:100 時圖高是舞台的 2.91 倍，要讓底邊對齊得
+   * 落在 y = -45.5%——差的那 45% 不是範圍不夠大，是模型用錯了。
+   *
+   * 對齊比例的好處是**它自己會跟著縮放調整**：不管放多大、縮多小，0～100 永遠
+   * 剛好涵蓋「能推到的極限」，不必替每個縮放倍率算一次可用範圍。
+   * 縮到比舞台小時（左右留黑）它也仍然成立：0 貼左、100 貼右。
+   *
    * @param imgAspect 素材本身的寬÷高
    * @param stageAspect 舞台（預覽框或投影視窗）的寬÷高
    */
@@ -252,11 +264,13 @@
     const sa = Number.isFinite(stageAspect) && stageAspect > 0 ? stageAspect : 16 / 9;
     // cover 由哪一邊決定：舞台比素材寬，就是寬度說了算（高度會溢出被切掉）
     const widthLimited = sa >= ia;
+    const w = widthLimited ? f * 100 : f * 100 * (ia / sa);
+    const h = widthLimited ? f * 100 * (sa / ia) : f * 100;
     return {
-      width: (widthLimited ? f * 100 : f * 100 * (ia / sa)) + '%',
-      height: (widthLimited ? f * 100 * (sa / ia) : f * 100) + '%',
-      left: num(layout && layout.x, def.x) + '%',
-      top: num(layout && layout.y, def.y) + '%',
+      width: w + '%',
+      height: h + '%',
+      left: (100 - w) * num(layout && layout.x, def.x) / 100 + '%',
+      top: (100 - h) * num(layout && layout.y, def.y) / 100 + '%',
     };
   }
 
