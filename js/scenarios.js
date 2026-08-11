@@ -34,6 +34,10 @@
   // 每種圖層的版面預設值。normalize 會補齊，forExport 只寫非預設值——
   // 否則每個情境檔都會被 size/x/y/tolerance 灌滿，手改時看不出哪裡真的動過。
   const LAYER_DEFAULTS = {
+    // 場景圖層沒有版面欄位：它只回答「這一頁有沒有背景」。
+    // **框哪一塊是情境層的事**（scenario.sceneFrame）——整個情境只有一張背景，
+    // 而「這個場地要框哪一塊」每一頁都一樣，做成每頁可覆寫只會多出一組
+    // 「預設 vs 偏離預設」的狀態要維護，而那個需求並不存在。
     scene: {},
     patient: { size: 85, x: 50, y: 57 },
     greenscreen: { size: 70, x: 50, y: 55, tolerance: 40 },
@@ -62,7 +66,158 @@
       environments: flattenEnvironments(o.environment),
       medicalEvents: asArray(o.medicalEvent),
       complications: asArray(o.complication),
+      // 基準格式的版面寫在圖層自己身上，所以它**不該**出現在 layouts 裡；
+      // 分成兩個欄位是為了讓警告講得出差別（不認得 vs 不該寫在這裡）
+      projectionBaseId: projectionFormats(o)[0].id,
+      projectionOverrideIds: projectionFormats(o).slice(1).map(f => f.id),
     };
+  }
+
+  // 場景框的預設：size 100 = 剛好蓋滿舞台（等同舊的 object-fit: cover）
+  const SCENE_FRAME_DEFAULTS = { size: 100, x: 50, y: 50 };
+
+  /**
+   * 情境層的一組版面（場景框、病患預設位置）。形狀刻意跟圖層一樣
+   * （基準欄位 ＋ layouts 覆寫），所以合併規則完全共用，不必各寫一份。
+   */
+  function normalizeFrame(raw, defaults, sets, where, warn) {
+    const src = isObject(raw) ? raw : {};
+    const out = normalizeLayout(src, defaults);
+    const layouts = layoutOverridesFor(src.layouts, defaults, sets, where, warn);
+    if (Object.keys(layouts).length) out.layouts = layouts;
+    return out;
+  }
+
+  /** 情境層版面在某個投影格式下的值。與圖層共用同一套「沒寫就退回基準」的規則 */
+  function frameFor(frame, defaults, formatId) {
+    const f = isObject(frame) ? frame : {};
+    const over = (isObject(f.layouts) && f.layouts[formatId]) || {};
+    const out = {};
+    for (const key of Object.keys(defaults)) {
+      out[key] = over[key] !== undefined ? over[key]
+        : (f[key] !== undefined ? f[key] : defaults[key]);
+    }
+    return out;
+  }
+
+  /** 場景在某個投影格式下的框 */
+  function sceneFrameFor(scenario, formatId) {
+    return frameFor(scenario && scenario.sceneFrame, SCENE_FRAME_DEFAULTS, formatId);
+  }
+
+  /**
+   * 病患在某個投影格式下的預設位置。
+   * **每個格式各一份**：16:9 調好的位置搬到 270° 上不會對——size 同時吃 vw 與 vh
+   * 取小的，在超寬螢幕上永遠被高度綁住，連「多大」都不一樣。
+   */
+  function patientHomeFor(scenario, formatId) {
+    return frameFor(scenario && scenario.patientHome, LAYER_DEFAULTS.patient, formatId);
+  }
+
+  // ---------- 投影格式 ----------
+  // 同一個情境會投在不同形狀的螢幕上：教室是一般 16:9，訓練場是 270° 的超寬投影。
+  //
+  // **同一組座標在兩種螢幕上不會落在同一個地方。** x/y 是視窗寬高的百分比，
+  // 而 size 同時吃 vw 與 vh 取小的——在超寬螢幕上永遠被高度綁住，所以連「多大」
+  // 都會變。所以要存的是整組版面各一份，不是只有 x/y。
+  //
+  // 為什麼不做成兩個情境：兩者之間**只有座標不同**，slides、台詞、順序一個字都不差。
+  // 複製一份的代價是之後每改一句台詞都要記得改兩邊——那正是這個專案一路在消滅的
+  // 第二份真相。
+  //
+  // 格式清單放 options（全域），不是每個情境自己寫：「我們有哪些場地」是組織的性質，
+  // 不是某一場訓練的性質。沒宣告時退回下面這組預設，舊資料因此完全不受影響。
+  const DEFAULT_PROJECTION_FORMATS = [
+    { id: 'wide', name: '一般 16:9 螢幕', aspect: 16 / 9 },
+    { id: 'ultrawide', name: '270° 投影', aspect: 16 / 3 },
+  ];
+
+  /**
+   * 有哪些投影格式。**第一個是基準**——它的版面就寫在圖層自己身上（size/x/y），
+   * 其餘格式才寫進 layer.layouts。這樣現有的資料一個字都不用改。
+   */
+  function projectionFormats(options) {
+    const declared = asArray((options || {}).projection).filter(isObject);
+    const list = declared
+      .map(f => ({
+        id: trimmed(f.id),
+        name: trimmed(f.name) || trimmed(f.id),
+        aspect: Number(f.aspect),
+      }))
+      .filter(f => f.id && Number.isFinite(f.aspect) && f.aspect > 0);
+    return list.length ? list : DEFAULT_PROJECTION_FORMATS.map(f => ({ ...f }));
+  }
+
+  /** 基準格式的 id：它的版面直接寫在圖層上，不進 layouts */
+  function baseFormatId(options) {
+    return projectionFormats(options)[0].id;
+  }
+
+  /** 視窗長寬比最接近哪一個格式。現場沒有人會記得先切，所以由視窗自己說了算 */
+  function formatForAspect(options, aspect) {
+    const list = projectionFormats(options);
+    if (!Number.isFinite(aspect) || aspect <= 0) return list[0];
+    return list.reduce((best, f) =>
+      Math.abs(f.aspect - aspect) < Math.abs(best.aspect - aspect) ? f : best, list[0]);
+  }
+
+  // 覆寫表的正規化：只留認得的格式、認得的欄位，值一樣夾回範圍內。
+  // 空的覆寫（沒有任何欄位）直接丟掉，否則匯出檔會長出一堆 `ultrawide: {}`。
+  function layoutOverrides(raw, type, sets, where, warn) {
+    return layoutOverridesFor(raw, LAYER_DEFAULTS[type], sets, where, warn);
+  }
+
+  function layoutOverridesFor(raw, defaults, sets, where, warn) {
+    if (raw === undefined || raw === null) return {};
+    if (!isObject(raw)) {
+      warn(`${where} 的 layouts 不是物件，已跳過`);
+      return {};
+    }
+    const out = {};
+    for (const [id, values] of Object.entries(raw)) {
+      // 基準格式不該出現在 layouts 裡——它的值就是圖層自己那一份，
+      // 寫進來就是同一件事有兩個地方可以講
+      if (id === sets.projectionBaseId) {
+        warn(`${where} 的 layouts 不該包含基準格式「${id}」（它的版面就寫在圖層上），已跳過`);
+        continue;
+      }
+      if (!sets.projectionOverrideIds.includes(id)) {
+        warn(`${where} 的 layouts 有不認得的投影格式「${id}」，已跳過`);
+        continue;
+      }
+      if (!isObject(values)) {
+        warn(`${where} 的 layouts.${id} 不是物件，已跳過`);
+        continue;
+      }
+      const one = {};
+      for (const key of Object.keys(defaults)) {
+        if (values[key] === undefined || values[key] === null) continue;
+        one[key] = clampField(values[key], key, defaults[key]);
+      }
+      if (Object.keys(one).length) out[id] = one;
+    }
+    return out;
+  }
+
+  /**
+   * 某個圖層在某個投影格式下的版面。**預覽、投影、編輯器都必須讀這一份。**
+   * 沒有覆寫的欄位退回圖層自己的值（也就是基準格式那一組）。
+   */
+  function layoutFor(layer, formatId) {
+    if (!layer) return null;
+    const defaults = LAYER_DEFAULTS[layer.type] || {};
+    const over = (isObject(layer.layouts) && layer.layouts[formatId]) || {};
+    const out = {};
+    for (const key of Object.keys(defaults)) {
+      out[key] = over[key] !== undefined ? over[key] : layer[key];
+    }
+    return out;
+  }
+
+  /** 這個圖層在這個格式下有沒有被調過——UI 要據此提示「這個格式還沒調」 */
+  function hasLayoutFor(layer, formatId) {
+    return !!(layer && isObject(layer.layouts) && isObject(layer.layouts[formatId])
+      && Object.keys(layer.layouts[formatId]).length);
   }
 
   // ---------- 推導 ----------
@@ -87,6 +242,49 @@
       left: num(layer.x, def.x) + '%',
       top: num(layer.y, def.y) + '%',
       fontSize: num(layer.size, def.size) / 10 + unit,
+    };
+  }
+
+  /**
+   * 場景鋪底的框。**預覽與投影共用這一份**（跟 textBoxStyle 同樣的理由：
+   * 兩邊各寫一次的話，拖出來的位置跟投影對不上，而且沒有任何地方會報錯）。
+   *
+   * 全部用百分比，不碰像素：舞台被拖寬、視窗被縮放都不必重算。
+   *
+   * `size: 100` 定義成「剛好蓋滿舞台」（等同 object-fit: cover），所以
+   * **既有資料的畫面一個像素都不會變**——這一點比模型漂不漂亮重要，
+   * 素材是 1.833:1 而不是剛好 16:9，改用 contain 當基準會讓現有情境冒出黑邊。
+   *
+   * **x／y 不是中心點，是對齊比例**（跟 CSS 的 background-position 同一個模型）：
+   * 0 = 貼齊上／左緣，100 = 貼齊下／右緣，50 = 置中。
+   *
+   * 一開始寫成「中心點落在 x%／y%」，那對疊在畫面上的人物是對的，對鋪底的背景是錯的：
+   * 背景放大之後**它的中心點本來就會跑到畫面外**，而 x／y 夾在 0–100，於是圖的底邊
+   * 永遠拉不到舞台底邊。270° 下 size:100 時圖高是舞台的 2.91 倍，要讓底邊對齊得
+   * 落在 y = -45.5%——差的那 45% 不是範圍不夠大，是模型用錯了。
+   *
+   * 對齊比例的好處是**它自己會跟著縮放調整**：不管放多大、縮多小，0～100 永遠
+   * 剛好涵蓋「能推到的極限」，不必替每個縮放倍率算一次可用範圍。
+   * 縮到比舞台小時（左右留黑）它也仍然成立：0 貼左、100 貼右。
+   *
+   * @param imgAspect 素材本身的寬÷高
+   * @param stageAspect 舞台（預覽框或投影視窗）的寬÷高
+   */
+  function sceneBoxStyle(layout, imgAspect, stageAspect) {
+    const def = SCENE_FRAME_DEFAULTS;
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+    const f = num(layout && layout.size, def.size) / 100;
+    const ia = Number.isFinite(imgAspect) && imgAspect > 0 ? imgAspect : 16 / 9;
+    const sa = Number.isFinite(stageAspect) && stageAspect > 0 ? stageAspect : 16 / 9;
+    // cover 由哪一邊決定：舞台比素材寬，就是寬度說了算（高度會溢出被切掉）
+    const widthLimited = sa >= ia;
+    const w = widthLimited ? f * 100 : f * 100 * (ia / sa);
+    const h = widthLimited ? f * 100 * (sa / ia) : f * 100;
+    return {
+      width: w + '%',
+      height: h + '%',
+      left: (100 - w) * num(layout && layout.x, def.x) / 100 + '%',
+      top: (100 - h) * num(layout && layout.y, def.y) / 100 + '%',
     };
   }
 
@@ -185,6 +383,12 @@
     for (const key of Object.keys(defaults)) {
       out[key] = clampField(layer[key], key, defaults[key]);
     }
+
+    // 其他投影格式的版面覆寫。**只存跟基準不一樣的那幾個值**（部分覆寫），
+    // 沒寫的欄位在讀的時候退回基準——那是刻意的：換算出來的位置哪裡都不對，
+    // 卻長得像有人調過，反而沒有人會回去修。
+    const layouts = layoutOverrides(layer.layouts, type, sets, where, warn);
+    if (Object.keys(layouts).length) out.layouts = layouts;
     return out;
   }
 
@@ -281,7 +485,12 @@
     // 病患在畫面上的預設位置，放情境層而不是每頁各自預設：同一場訓練裡病患不會換位置，
     // **新增一頁時應該直接站在對的地方**，而不是回到全域預設再手動拖一次。
     // 只影響「新的頁」與「歸位」——已存在的頁各自的值仍存在自己的圖層上，不會被追溯改動。
-    out.patientHome = normalizeLayout(scenario.patientHome, LAYER_DEFAULTS.patient);
+    out.patientHome = normalizeFrame(scenario.patientHome, LAYER_DEFAULTS.patient, sets,
+      `${where} 的病患預設位置`, warn);
+    // 場景要框哪一塊是**整個情境**的事：一個情境只有一張背景，而「這個場地怎麼取景」
+    // 每一頁都一樣。做成每頁可覆寫只會多出「預設 vs 偏離預設」一組狀態要維護。
+    out.sceneFrame = normalizeFrame(scenario.sceneFrame, SCENE_FRAME_DEFAULTS, sets,
+      `${where} 的場景框`, warn);
     return out;
   }
 
@@ -326,6 +535,20 @@
 
   // ---------- 匯出／匯入 ----------
 
+  // 情境層版面的匯出：跟預設完全一樣就不寫，維持「手改時只看到真的動過的東西」
+  function exportFrame(frame, defaults) {
+    const f = isObject(frame) ? frame : {};
+    const moved = Object.keys(defaults).some(k => f[k] !== defaults[k]);
+    const hasOverrides = isObject(f.layouts) && Object.keys(f.layouts).length;
+    if (!moved && !hasOverrides) return null;
+    const out = {};
+    for (const k of Object.keys(defaults)) out[k] = f[k] !== undefined ? f[k] : defaults[k];
+    if (hasOverrides) {
+      out.layouts = Object.fromEntries(Object.entries(f.layouts).map(([id, v]) => [id, { ...v }]));
+    }
+    return out;
+  }
+
   // 匯出前把執行期才有的欄位（source）拿掉，否則匯出檔會帶著上一台機器的來源標記
   function forExport(scenarios) {
     return asArray(scenarios).map(s => {
@@ -333,10 +556,10 @@
       if (s.note) out.note = s.note;
       if (s.ambience && s.ambience !== 'auto') out.ambience = s.ambience;
       // 跟全域預設一樣就不寫，維持「手改時只看到真的動過的東西」
-      const home = s.patientHome || {};
-      if (Object.keys(LAYER_DEFAULTS.patient).some(k => home[k] !== LAYER_DEFAULTS.patient[k])) {
-        out.patientHome = { ...home };
-      }
+      const home = exportFrame(s.patientHome, LAYER_DEFAULTS.patient);
+      if (home) out.patientHome = home;
+      const frame = exportFrame(s.sceneFrame, SCENE_FRAME_DEFAULTS);
+      if (frame) out.sceneFrame = frame;
       out.slides = asArray(s.slides).map(slide => {
         const o = { id: slide.id, title: slide.title };
         // enabled: true 是預設值，不寫進匯出檔，讓人手改時看到的是最小差異
@@ -353,6 +576,11 @@
           const defaults = LAYER_DEFAULTS[layer.type] || {};
           for (const key of Object.keys(defaults)) {
             if (layer[key] !== undefined && layer[key] !== defaults[key]) l[key] = layer[key];
+          }
+          // 其他投影格式的覆寫原樣帶走（它本來就只存「真的調過的那幾個欄位」）
+          if (isObject(layer.layouts) && Object.keys(layer.layouts).length) {
+            l.layouts = Object.fromEntries(
+              Object.entries(layer.layouts).map(([id, v]) => [id, { ...v }]));
           }
           return l;
         });
@@ -721,6 +949,16 @@
     layerOf,
     layerVisible,
     textBoxStyle,
+    sceneBoxStyle,
+    SCENE_FRAME_DEFAULTS,
+    sceneFrameFor,
+    patientHomeFor,
+    DEFAULT_PROJECTION_FORMATS,
+    projectionFormats,
+    baseFormatId,
+    formatForAspect,
+    layoutFor,
+    hasLayoutFor,
     BASE_ROLES,
     COMPLICATION_ROLES,
     optionSets,

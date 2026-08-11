@@ -152,7 +152,7 @@
        由 updatePreviewFit() 量出來寫進來。寫死一個數字遲早跟備註欄對不上，
        而低估的方向會把備註擠出畫面——整頁不捲，擠出去就是永遠看不到。 */
     body.editing .edit-sticky .preview-stage {
-      width: min(100cqw, calc((100cqh - var(--preview-reserve, 200px)) * 16 / 9));
+      width: min(100cqw, calc((100cqh - var(--preview-reserve, 200px)) * var(--stage-aspect, 1.778)));
       height: auto;
     }
   }
@@ -289,6 +289,74 @@
   /* 媒體池：實際發出聲音的地方。推到畫面外而不是 display:none／hidden——
      隱藏的 <video> 在部分瀏覽器不保證會播，而這裡的綠幕影片正是靠原聲發聲。 */
   #media-pool { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+  /* 音量。滑桿平常不佔位（絕對定位浮在按鈕上方），不然主控列會被撐開一截 */
+  .volume { position: relative; display: inline-flex; align-items: center; }
+  /* 瀏覽模式是「確認這是不是我要的情境」，不是調音的地方——調音屬於編輯 */
+  .stage-bar.browse .volume { display: none; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 9px 12px; line-height: 0;
+  }
+  .icon-btn svg { width: 18px; height: 18px; display: block; }
+  /* 直的滑桿：音量就是「高低」，橫的要在腦子裡轉一次。
+     writing-mode 直排 ＋ direction: rtl ＝ 下面是小聲、上面是大聲。 */
+  .volume-popup {
+    position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    /* 這一層是透明的橋：**貼著按鈕**，滑鼠從按鈕移向滑桿的路上不會離開 .volume。
+       留成真的空隙（bottom: calc(100% + 8px)）的話，滑桿會在半路消失。
+       視覺上的空隙由這層的 padding-bottom 讓出來，看得見的是內層。 */
+    padding-bottom: 8px;
+    opacity: 0; visibility: hidden;
+    /* 淡出：visibility 沒有中間值，所以延後到淡完才切，否則會直接消失 */
+    transition: opacity .18s ease, visibility 0s linear .18s;
+  }
+  .volume:hover .volume-popup,
+  .volume:has(:focus-visible) .volume-popup {
+    opacity: 1; visibility: visible;
+    transition: opacity .18s ease, visibility 0s;
+  }
+  .volume-panel {
+    position: relative;
+    /* **display: flex 不能省。** input 預設是 inline 元素，會坐在文字基線上，
+       底下多出一截下緣間隙——於是細線離上緣與離下緣的距離不一樣。 */
+    display: flex;
+    padding: 14px 12px; border-radius: 12px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, .45);
+  }
+  /* 細軌道自己畫成一個元素，不是 input 的背景：背景圓不了角，而端點的圓角
+     正是它看起來像「一條軌道」而不是「一段色塊」的原因。
+     上下用 inset 對齊 panel 的 padding，所以它與 input 的可拖範圍完全重合。 */
+  .volume-panel::before {
+    content: ''; position: absolute; z-index: 0;
+    top: 14px; bottom: 14px; left: 50%; transform: translateX(-50%);
+    width: 5px; border-radius: 999px;
+    background: linear-gradient(to top,
+      var(--accent) var(--fill, 100%), rgba(255, 255, 255, .14) var(--fill, 100%));
+  }
+  /* **input 的寬度要等於軌道的寬度，不能更寬。**
+     input 16px、軌道 5px 的時候，軌道靠著自己的框對齊、thumb 靠著 input 的框對齊，
+     兩個中心對不上——畫出來就是歪的。左右用 padding 撐出好按的範圍，
+     padding 只影響橫向，不會動到「拖到哪等於幾」。 */
+  .volume-panel input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    writing-mode: vertical-lr; direction: rtl;
+    display: block; position: relative; z-index: 1;
+    width: 14px; height: 104px; margin: 0; padding: 0 6px;
+    box-sizing: content-box; background: transparent; cursor: pointer;
+  }
+  /* 原生軌道整個透明：看得見的那條由 .volume-panel::before 畫，
+     這裡只留下「可以拖」這件事。兩邊都畫的話，粗細與圓角會有兩個決定者。 */
+  .volume-panel input[type=range]::-webkit-slider-runnable-track {
+    width: 14px; height: 100%; background: transparent;
+  }
+  .volume-panel input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; border: 0; box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+  }
+  .volume-panel input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  /* 靜音不換顏色：圖示本身（喇叭上打叉）已經說完了，再加一個紅框是同一件事講兩次 */
 
 
   .field label.title { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; letter-spacing: .5px; }
@@ -451,12 +519,19 @@
      跟著框寬走（cqw），縮圖與投影上的比例才會一致。 */
   /* 預覽拿走右欄的全寬——選完情境後它是最重要的東西 */
   .preview { margin-bottom: 16px; }
+  /* 舞台的長寬比跟著「目前在調哪一種投影格式」走（COO-104）。
+     以前這裡寫死 16/9，還配著一句「舞台必須維持 16:9，框一被壓扁位置就對不上投影」——
+     那句話的前提是投影一定是 16:9，而訓練場是 270°。**要調超寬螢幕的版面，
+     預覽就得先變成超寬**，否則等於閉著眼睛調。 */
   .preview-stage {
-    position: relative; width: 100%; aspect-ratio: 16 / 9;
+    position: relative; width: 100%; aspect-ratio: var(--stage-aspect, 16 / 9);
     overflow: hidden; border-radius: 10px; background: #000;
     border: 1px solid var(--line); container-type: size;
   }
-  .preview-scene { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  /* 場景的框由 Scenarios.sceneBoxStyle() 以百分比寫在 style 上（COO-104）。
+     框的長寬比永遠等於素材本身，所以 object-fit 用 fill 也不會變形；
+     用 fill 是為了讓「框多大就畫多大」這件事只有一個決定者。 */
+  .preview-scene { position: absolute; object-fit: fill; }
   /* 圖層外包一層：絕對定位且寬高 auto 會縮到內容大小，把手才貼得到真正的邊角。
      媒體的尺寸上限用 px 由 JS 依 stage 實際寬高算出——百分比在 shrink-to-fit
      的容器裡會變成循環參照，瀏覽器直接當成沒設。 */
@@ -506,6 +581,23 @@
     opacity: 0; transition: opacity .18s ease;
   }
   .preview-stage:hover .preview-nav { opacity: .85; }
+  /* 投影格式分頁。長得像分頁而不是按鈕：它切換的是「你正在看哪一種螢幕」，
+     不是一個會做事的動作。 */
+  /* 預設位置畫布的角標：預覽在這個狀態下顯示的不是某一頁，必須講出來 */
+  .preview-badge {
+    position: absolute; left: 8px; top: 8px; z-index: 4;
+    font-size: 11px; padding: 3px 9px; border-radius: 999px;
+    background: rgba(0,0,0,.66); color: var(--accent); border: 1px solid var(--accent);
+    pointer-events: none;
+  }
+  .format-tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .format-tab {
+    font-size: 12px; padding: 5px 12px; border-radius: 999px;
+    background: transparent; border: 1px solid var(--line); color: var(--muted);
+  }
+  .format-tab.active { border-color: var(--accent); color: var(--text); background: var(--accent-dim); }
+  /* 還沒調過的格式：目前照基準那組在跑，用虛線邊講出「這裡還沒被決定」 */
+  .format-tab.untuned:not(.active) { border-style: dashed; }
   .preview-nav:hover { opacity: 1 !important; background: rgba(0,0,0,.8); }
   .preview-nav:disabled { opacity: 0 !important; pointer-events: none; }
   .preview-nav.prev { left: 8px; }
@@ -551,6 +643,7 @@
   .overlay-controls button.preview.on { border-color: var(--accent); background: var(--accent-dim); }
 
   #status { color: var(--muted); font-size: 13px; }
+  #status:empty { display: none; }
   /* 出錯時要夠明顯：它常常是使用者唯一能看到的線索 */
   #status.error {
     color: var(--accent); font-weight: 600;
@@ -602,6 +695,20 @@
       <div class="stage-bar" id="stage-bar">
         <button id="btn-project" disabled>開始投影</button>
         <button id="btn-play" disabled>播放環境音</button>
+        <!-- 音量：滑桿收在按鈕上方，hover 或鍵盤 focus 才浮出來。
+             兩者包在同一個容器裡，滑鼠從喇叭移到滑桿的路上不會經過容器外面，
+             否則滑桿會在半路消失。 -->
+        <div class="volume" id="volume-control">
+          <button id="btn-mute" type="button" class="icon-btn" aria-label="靜音"></button>
+          <!-- 兩層：外層是透明的「橋」，一路貼到按鈕，滑鼠移過去的路上不會離開
+               .volume；看得見的那塊是內層，所以視覺上仍有空隙。 -->
+          <div class="volume-popup">
+            <div class="volume-panel">
+              <input id="volume-slider" type="range" min="0" max="100" step="1"
+                     aria-label="音量" title="音量">
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -704,8 +811,82 @@ function currentSlide() {
   return flowIndex >= 0 ? flowSteps[flowIndex] : null;
 }
 
+// ---------- 投影格式（COO-104）----------
+// 同一個情境會投在教室的 16:9 螢幕，也會投在訓練場的 270° 超寬投影上，而**同一組
+// 座標在兩種螢幕上不會落在同一個地方**——x/y 是視窗寬高的百分比，size 又同時吃
+// vw 與 vh 取小的，在超寬螢幕上永遠被高度綁住。所以每個圖層每種格式各存一份版面。
+//
+// **一次只有一個格式是「作用中」的，預覽與投影共用它。** 分成兩個的話，
+// 編輯畫面顯示 16:9、投影機是超寬，人就會對著一個騙他的預覽調位置——而這個專案
+// 最核心的性質就是「預覽 == 投影」。開投影視窗時會依它的長寬比自動切換。
+let activeFormat = null;
+
+function projectionFormats() {
+  return Scenarios.projectionFormats(DATA && DATA.options);
+}
+
+function activeFormatId() {
+  return activeFormat || Scenarios.baseFormatId(DATA && DATA.options);
+}
+
+function activeFormatInfo() {
+  const id = activeFormatId();
+  return projectionFormats().find(f => f.id === id) || projectionFormats()[0];
+}
+
+/**
+ * 這個圖層在目前格式下「該被寫進哪裡」。
+ * 基準格式就寫在圖層自己身上；其他格式寫進 layer.layouts[id]。
+ *
+ * 回傳的是**真正的儲存位置**（拖曳會就地改它），所以第一次建立時要先把目前生效的
+ * 值抄進去——只寫 x 的話，沒寫的 size/y 會在下次讀取時退回基準，位置就會跳一下。
+ */
+/**
+ * 換一個投影格式。**整個畫面連同投影視窗一起換**，因為作用中的格式只有一個。
+ * 換完要重讀版面：執行期物件裡裝的是上一個格式的座標。
+ */
+function setActiveFormat(id) {
+  if (id === activeFormatId()) return;
+  activeFormat = id;
+  const slide = (panelLevel === 'edit' && editingSlide()) || currentSlide();
+  loadLayoutFromSlide(slide);
+  renderFlow();
+  // 投影視窗要立刻跟著跳，不然教官會以為切了沒事發生
+  applyPatientOverlayLayout();
+  applyComplicationOverlayLayout();
+  renderProjectionText(slide);
+  applyProjectionSceneBox();
+}
+
+function layoutSlot(layer, formatId) {
+  if (!layer) return null;
+  const base = Scenarios.baseFormatId(DATA && DATA.options);
+  if (formatId === base) return layer;
+  if (!layer.layouts) layer.layouts = {};
+  if (!layer.layouts[formatId]) layer.layouts[formatId] = Scenarios.layoutFor(layer, formatId);
+  return layer.layouts[formatId];
+}
+
 // 滑桿下方那行字要誠實：沒載入情境時調了不會被記住
 // 進到某一頁時，把該頁圖層上的版面搬進執行期物件（渲染程式讀的還是這兩個物件）
+/**
+ * 這一頁的病患在某個格式下實際該站的位置。
+ *
+ * **這一頁還沒替這個格式調過時，退回「這個情境在這個格式的預設」**，而不是退回
+ * 圖層的基準值——16:9 的座標放到 270° 上是錯的位置，而那正是切換格式後病患
+ * 沒有跳到對的地方、要按一次歸位才會對的原因。
+ *
+ * 基準格式不走這條：它的值就寫在圖層自己身上，本來就是對的。
+ */
+function patientLayoutOf(slide, fmt) {
+  const layer = Scenarios.layerOf(slide, 'patient');
+  if (!layer) return null;
+  if (fmt === Scenarios.baseFormatId(DATA.options) || Scenarios.hasLayoutFor(layer, fmt)) {
+    return Scenarios.layoutFor(layer, fmt);
+  }
+  return Scenarios.patientHomeFor(currentScenario, fmt);
+}
+
 function loadLayoutFromSlide(slide) {
   Object.assign(patientOverlay, PATIENT_OVERLAY_DEFAULTS);
   // **就地覆寫，不能 delete 再重建。** 投影的去背迴圈與預覽都抓著這兩個物件的參考
@@ -713,15 +894,23 @@ function loadLayoutFromSlide(slide) {
   // 它們會繼續讀舊的那個孤兒，畫面就不會跟著動——這裡曾經踩過。
   Object.values(complicationOverlays).forEach(l => Object.assign(l, COMP_OVERLAY_DEFAULTS));
 
+  // 讀的一律是「目前格式下生效的版面」，不是圖層上那組原始值——
+  // 沒調過的格式會退回基準，那個退回發生在 Scenarios.layoutFor 裡，只有一份實作
+  const fmt = activeFormatId();
+
   const patient = slide && Scenarios.layerOf(slide, 'patient');
   // 有沒有 patient 圖層就是「要不要疊病患」——不需要另一個獨立的開關狀態
   patientOverlay.enabled = !!patient;
-  if (patient) LAYOUT_KEYS.patient.forEach(k => { patientOverlay[k] = patient[k]; });
+  if (patient) {
+    const layout = patientLayoutOf(slide, fmt);
+    LAYOUT_KEYS.patient.forEach(k => { patientOverlay[k] = layout[k]; });
+  }
 
   const green = slide && Scenarios.layerOf(slide, 'greenscreen');
   if (green) {
     const layout = complicationOverlay(green.complication);
-    LAYOUT_KEYS.greenscreen.forEach(k => { layout[k] = green[k]; });
+    const from = Scenarios.layoutFor(green, fmt);
+    LAYOUT_KEYS.greenscreen.forEach(k => { layout[k] = from[k]; });
   }
 }
 
@@ -731,20 +920,28 @@ function loadLayoutFromSlide(slide) {
 // 不替 text 多開一個執行期物件，是因為那個物件唯一的用途就是「等一下再抄回圖層」——
 // 多一份就多一次抄漏的機會，而它連一幀都不需要被別人抓著參考。
 function previewLayoutTarget(type, comp, slide) {
-  if (type === 'patient') return patientOverlay;
+  if (type === 'patient') return editingDefaults() ? patientHomeSlot() : patientOverlay;
   if (type === 'greenscreen') return complicationOverlay(comp);
-  return Scenarios.layerOf(slide || currentSlide(), type);
+  // text 直接寫回儲存位置——而「哪個儲存位置」取決於目前是哪一個投影格式
+  if (type === 'scene') return sceneFrameSlot();
+  return layoutSlot(Scenarios.layerOf(slide || currentSlide(), type), activeFormatId());
 }
 
 // 拖滑桿會連續觸發，每一格都寫 localStorage 太重，收斂成一次
 let layoutSaveTimer = null;
 function persistLayerLayout(type, comp) {
+  // 場景不是圖層版面，它住在情境層——拖曳時就地改了 sceneFrame，這裡只要存檔
+  if (type === 'scene') { persistSceneFrame(); return; }
+  // 預設值畫布上動的是 patientHome，同樣住在情境層
+  if (type === 'patient' && editingDefaults()) { persistSceneFrame(); return; }
   const slide = currentSlide();
   const layer = slide && Scenarios.layerOf(slide, type);
   // 沒載入情境（直接按「產生情境」的臨時模式）就只在記憶體裡調，不寫進任何情境檔
   if (!currentScenario || !layer) return;
   const src = previewLayoutTarget(type, comp, slide);
-  LAYOUT_KEYS[type].forEach(k => { layer[k] = src[k]; });
+  // 寫回目前格式的那一份，不是永遠寫回圖層——調 270° 的位置不該把 16:9 的改掉
+  const slot = layoutSlot(layer, activeFormatId());
+  LAYOUT_KEYS[type].forEach(k => { slot[k] = src[k]; });
   clearTimeout(layoutSaveTimer);
   layoutSaveTimer = setTimeout(() => saveScenarioOverride(currentScenario), 400);
 }
@@ -830,6 +1027,7 @@ const REQUIRED_SCENARIO_API = [
   'normalizeScenarios', 'mergeScenarios', 'forExport', 'complicationsOf', 'playableSlides',
   'exportScenarioYaml', 'parseImport', 'contributionUrl',
   'scenarioIdProblem', 'copyScenarioId', 'scenarioPath',
+  'projectionFormats', 'baseFormatId', 'formatForAspect', 'layoutFor', 'hasLayoutFor',
   'segmentOf', 'complicationSegments', 'eligibleAssets',
   'availableComplications', 'baseCoverage',
 ];
@@ -1112,7 +1310,8 @@ function renderProjectionText(slide) {
   box.textContent = layer.text;
   box.style.display = 'block';
   // 投影的舞台就是視窗，所以單位是 vw；預覽用 cqw。座標公式只有這一份。
-  Object.assign(box.style, Scenarios.textBoxStyle(layer, 'vw'));
+  Object.assign(box.style,
+    Scenarios.textBoxStyle(Scenarios.layoutFor(layer, activeFormatId()), 'vw'));
 }
 
 function gotoFlow(index) {
@@ -1242,7 +1441,15 @@ function newLayer(type) {
   const layer = { type, ...Scenarios.LAYER_DEFAULTS[type] };
   // 病患站的位置由情境決定：新的一頁應該直接站在對的地方，而不是回到全域預設再拖一次
   if (type === 'patient' && currentScenario && currentScenario.patientHome) {
-    Object.assign(layer, currentScenario.patientHome);
+    const home = currentScenario.patientHome;
+    Object.keys(Scenarios.LAYER_DEFAULTS.patient).forEach(k => {
+      if (home[k] !== undefined) layer[k] = home[k];
+    });
+    // 覆寫一起帶走，新的一頁在**每一種格式**都站在對的地方，不只基準那個
+    if (home.layouts && Object.keys(home.layouts).length) {
+      layer.layouts = Object.fromEntries(
+        Object.entries(home.layouts).map(([id, v]) => [id, { ...v }]));
+    }
   }
   if (type === 'greenscreen') layer.complication = firstUsableComplication();
   if (type === 'text') layer.text = '說明文字';
@@ -1252,23 +1459,27 @@ function newLayer(type) {
 // 「歸位」對病患而言是回到**這個情境**的預設位置，不是全域預設——
 // 全域預設只是還沒有人設定過時的起點。
 function homeLayoutFor(type) {
-  if (type === 'patient' && currentScenario && currentScenario.patientHome) {
-    return currentScenario.patientHome;
+  // **要取目前格式的那一份。** 只取基準的話，在 270° 下按「歸位」會跳到 16:9 的
+  // 預設位置——在超寬螢幕上是錯的，而且會順手替 270° 建一筆不必要的覆寫。
+  if (type === 'patient' && currentScenario) {
+    return Scenarios.patientHomeFor(currentScenario, activeFormatId());
   }
   return Scenarios.LAYER_DEFAULTS[type];
 }
 
 // 把目前這一頁的病患位置，收成整個情境的預設。之後新增的頁都從這裡開始。
-function setPatientHomeFromCurrent() {
-  const slide = editingSlide();
-  const layer = slide && Scenarios.layerOf(slide, 'patient');
-  if (!currentScenario || !layer) return;
-  currentScenario.patientHome = Object.fromEntries(
-    Object.keys(Scenarios.LAYER_DEFAULTS.patient).map(k => [k, layer[k]]));
-  persistScenarioEdit();
-  setStatus('已把這一頁的病患位置設為此情境的預設，之後新增的頁會從這裡開始。');
+// 這一頁的病患有沒有偏離預設（比的是**目前格式**生效的那兩份值）
+function patientMovedFromHome(layer) {
+  if (!layer || !currentScenario) return false;
+  const slide = editingSlide() || currentSlide();
+  const now = patientLayoutOf(slide, activeFormatId()) || Scenarios.layoutFor(layer, activeFormatId());
+  const home = Scenarios.patientHomeFor(currentScenario, activeFormatId());
+  return Object.keys(Scenarios.LAYER_DEFAULTS.patient).some(k => now[k] !== home[k]);
 }
 
+// 「設為預設」已經移除：預設位置在「情境設定」展開時的畫布上直接拖就好。
+// 留著它等於**同一件事有兩個入口**，而其中一個還是「在某一頁按一顆按鈕改全域值」——
+// 那正是當初讓 patientHome 變成隱形值的原因。
 function addLayer(type) {
   const slide = editingSlide();
   if (!slide) return;
@@ -1302,7 +1513,19 @@ function resetLayerLayout(type, comp) {
   else { applyComplicationOverlayLayout(); if (chromaRedraw && !chromaFrame) chromaRedraw(); }
   const slide = editingSlide();
   const layer = slide && Scenarios.layerOf(slide, type);
-  if (layer) Object.assign(layer, defaults);
+  if (layer) {
+    const fmt = activeFormatId();
+    if (fmt === Scenarios.baseFormatId(DATA.options)) {
+      // 基準格式的值就寫在圖層自己身上
+      Object.assign(layer, defaults);
+    } else if (layer.layouts) {
+      // 其他格式：**把覆寫刪掉**，回到「這一頁還沒替這個格式調過」的狀態，
+      // 而不是把預設值抄一份進去。抄一份的話它會變成一筆「調過、剛好等於預設」的
+      // 資料，之後改預設時這一頁不會跟著動。
+      delete layer.layouts[fmt];
+      if (!Object.keys(layer.layouts).length) delete layer.layouts;
+    }
+  }
   persistScenarioEdit();
 }
 
@@ -1461,7 +1684,9 @@ function buildScenarioSettingsRow(doc) {
   item.className = 'flow-item settings-item' + (settingsExpanded ? ' expanded' : '');
 
   const row = doc.createElement('div');
-  row.className = 'flow-row settings-row clickable';
+  // 展開時借用跟「目前這一頁」同一套 current 樣式：選中就是選中，
+  // 不必為情境設定另外發明一種外觀
+  row.className = 'flow-row settings-row clickable' + (settingsExpanded ? ' current' : '');
   const gear = doc.createElement('span');
   gear.className = 'settings-gear';
   gear.textContent = '⚙';
@@ -1824,6 +2049,73 @@ function mediaKind(asset, file = assetPath(asset, assetFiles(asset)[0])) {
   return asset.type || 'audio';
 }
 
+// ---------- 音量 ----------
+// **所有聲音都從 #media-pool 出來**（環境音、突發狀況的配音與影片原聲），所以
+// 音量與靜音只要作用在那個容器上就涵蓋全部，不必逐一去找誰在響。
+//
+// 音量持存、靜音不持存：下次打開時「小聲」還原得回來是方便，「靜音」還原回來
+// 卻是災難——教官在台上按了半天沒聲音，而畫面上唯一的線索是一顆小圖示。
+// 寧可每次重開都會出聲。
+const VOLUME_KEY = 'ems-scene-player:volume';
+let masterVolume = (() => {
+  // **不能直接 Number()**：沒存過時 getItem 回 null，而 Number(null) 是 0，
+  // 0 又剛好落在 0–100 的合法範圍內——於是第一次打開就是靜音，
+  // 而畫面上唯一的線索是一顆小圖示。這個坑實測踩過。
+  const raw = localStorage.getItem(VOLUME_KEY);
+  if (raw === null) return 100;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : 100;
+})();
+let audioMuted = false;
+
+const SPEAKER_PATH = 'M4 9v6h3.2L12 19V5L7.2 9H4z';
+function speakerIcon(level, muted) {
+  const waves = muted ? '<path d="M16 9l5 6M21 9l-5 6"/>'
+    : (level > 55 ? '<path d="M15.5 8.5a5 5 0 010 7"/><path d="M18 6a8.5 8.5 0 010 12"/>'
+      : level > 0 ? '<path d="M15.5 8.5a5 5 0 010 7"/>' : '');
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="${SPEAKER_PATH}" fill="currentColor" stroke="none"/>${waves}</svg>`;
+}
+
+// el 省略＝套用到池裡全部；給了 el 就只套那一顆（新建時用）
+function applyVolume(el) {
+  const value = audioMuted ? 0 : masterVolume / 100;
+  const targets = el ? [el] : $('media-pool').querySelectorAll('audio, video');
+  targets.forEach(m => { m.volume = value; m.muted = audioMuted; });
+}
+
+function renderVolumeControl() {
+  const btn = $('btn-mute');
+  btn.innerHTML = speakerIcon(masterVolume, audioMuted || masterVolume === 0);
+  btn.setAttribute('aria-pressed', String(audioMuted));
+  btn.title = audioMuted ? '已靜音——按一下恢復' : `音量 ${masterVolume}%（按一下靜音）`;
+  // 靜音時滑桿掉到最底，取消靜音自己回到原位。
+  // **不需要記住「靜音前是多少」**——masterVolume 從頭到尾沒被改過，
+  // 被靜音蓋掉的只有「顯示值」。多存一個 volumeBeforeMute 就是多一份會走鐘的狀態。
+  const shown = audioMuted ? 0 : masterVolume;
+  const slider = $('volume-slider');
+  slider.value = String(shown);
+  // --fill 掛在最外層：畫線的是 .volume-panel::before，不是 input，
+  // 設在 input 上的話那個偽元素看不到（自訂屬性只往下繼承）
+  $('volume-control').style.setProperty('--fill', shown + '%');
+}
+
+function setVolume(value) {
+  masterVolume = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  localStorage.setItem(VOLUME_KEY, String(masterVolume));
+  // 拉動滑桿等於「我要聽見」，所以順手解除靜音——不然拉半天沒聲音
+  if (masterVolume > 0) audioMuted = false;
+  applyVolume();
+  renderVolumeControl();
+}
+
+function toggleMute() {
+  audioMuted = !audioMuted;
+  applyVolume();
+  renderVolumeControl();
+}
+
 function absoluteAssetUrl(file) {
   try {
     return new URL(file, document.baseURI).href;
@@ -1871,14 +2163,13 @@ function projectionMarkup() {
     color: #fff;
     font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
   }
-  #projection-stage, #projection-stage > img, #projection-stage > video {
-    width: 100%; height: 100%;
-  }
+  #projection-stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  /* 場景的框由 Scenarios.sceneBoxStyle() 以百分比寫在 style 上，與預覽共用同一份
+     換算（COO-104）。以前這裡是 object-fit:cover 寫死——在 270° 的超寬視窗上，
+     cover 會把 1.833:1 的素材撐到三倍高，只剩中間一條看得見。 */
   #projection-stage > img, #projection-stage > video {
-    display: block;
-    border: 0;
-    object-fit: cover;
-    object-position: center;
+    position: absolute; display: block; border: 0;
+    object-fit: fill;
     background: #000;
   }
   #projection-patient-layer {
@@ -2314,6 +2605,19 @@ function renderProjectionAsset(asset) {
   });
 }
 
+// 投影端的場景框。舞台就是視窗本身，所以長寬比用視窗的量。
+function applyProjectionSceneBox() {
+  const doc = projectionDocument();
+  if (!doc || !projectionWindow) return;
+  const media = doc.querySelector('#projection-stage > img, #projection-stage > video');
+  if (!media) return;
+  const aspect = (projectionWindow.innerWidth || 0) / (projectionWindow.innerHeight || 1);
+  const place = () => applySceneBox(media, sceneLayoutOf(), aspect);
+  place();
+  media.addEventListener('load', place, { once: true });
+  media.addEventListener('loadedmetadata', place, { once: true });
+}
+
 function renderProjectionScene() {
   if (!projectionWindow || projectionWindow.closed) return;
   if (currentEnvironmentAsset) {
@@ -2324,6 +2628,7 @@ function renderProjectionScene() {
     showProjectionMessage(doc, '這個情境沒有可投影的環境素材。');
   }
   renderProjectionPatient();
+  applyProjectionSceneBox();
 }
 
 function openProjection() {
@@ -2351,6 +2656,25 @@ function openProjection() {
   win.focus();
   $('btn-project').textContent = '聚焦投影視窗';
   renderProjectionScene();
+  syncFormatToProjection(win);
+}
+
+/**
+ * 投影視窗開好之後，依它自己的長寬比挑投影格式。
+ * **現場沒有人會記得先切分頁**，但視窗知道自己多寬——所以這件事不該問人。
+ * 放在 maximize 之後才量：視窗還在長大的時候量到的是中間過程。
+ */
+function syncFormatToProjection(win) {
+  const measure = () => {
+    if (!win || win.closed) return;
+    const aspect = (win.innerWidth || 0) / (win.innerHeight || 1);
+    const picked = Scenarios.formatForAspect(DATA.options, aspect);
+    if (picked.id === activeFormatId()) return;
+    setActiveFormat(picked.id);
+    setStatus(`投影視窗是 ${aspect.toFixed(2)}:1，已切到「${picked.name}」的版面。`);
+  };
+  // 放大是非同步的，量太早會量到還沒展開的那一瞬間
+  setTimeout(measure, 300);
 }
 
 function playProjection() {
@@ -2415,6 +2739,7 @@ function poolMediaFor(asset) {
   el.preload = 'auto';
   el.loop = asset.role === 'ambient_sound';   // 環境聲音要撐滿全場，其餘播完就停
   $('media-pool').appendChild(el);
+  applyVolume(el);   // 新建的也要跟上，否則下一段聲音會用滿音量炸出來
   return el;
 }
 
@@ -2527,7 +2852,9 @@ const SPLIT_MIN = 22;      // 百分比。留下限，免得任一欄被拖到 0
 const SPLIT_MAX = 62;
 let splitPercent = (() => {
   const raw = Number(localStorage.getItem(SPLIT_KEY));
-  return Number.isFinite(raw) && raw >= SPLIT_MIN && raw <= SPLIT_MAX ? raw : 42;
+  // 預設左三右七：左欄是清單（窄一點就夠讀），右欄是預覽（這個工具的重點）。
+  // 調過的人不受影響——這個值一調就存 localStorage，只有沒調過的人吃預設。
+  return Number.isFinite(raw) && raw >= SPLIT_MIN && raw <= SPLIT_MAX ? raw : 30;
 })();
 
 function splitterColumns() {
@@ -2624,7 +2951,10 @@ function buildFlowPanel(doc, preview) {
     item.className = 'flow-item' + (expanded ? ' expanded' : '');
 
     const row = doc.createElement('div');
-    row.className = 'flow-row' + (slide.id === currentSlideId ? ' current' : '')
+    // 情境設定展開時，橘色移到它身上——**同一時間只該有一個東西看起來是「選中的」**。
+    // 兩邊都亮的話，你在改的是預設位置，眼睛卻被某一頁的橘框拉走。
+    row.className = 'flow-row'
+      + (slide.id === currentSlideId && !settingsExpanded ? ' current' : '')
       + (slide.enabled === false ? ' off' : '');
 
     const toggle = doc.createElement('label');
@@ -2988,12 +3318,13 @@ function buildSlideBody(doc, slide) {
     // 只有病患有「歸位」與「設為預設」：它整場站同一個地方，所以情境層存得住一個預設。
     // 去背人物每一段站的位置本來就該各自調（這一段站左邊、下一段走近），
     // 沒有一個「原本的位置」可以回去——給它一顆歸位只會讓人以為自己弄壞了什麼。
-    if (layer.type === 'patient') {
+    // 而且**只在這一頁真的偏離預設時才出現**：沒動過的時候，「歸位」歸到原地、
+    // 「設為預設」把預設設成它自己，兩顆都是沒有效果的按鈕。常駐等於每一頁都掛著
+    // 兩顆雜訊，而預設位置本身現在有自己的地方可以編（展開情境設定）。
+    if (layer.type === 'patient' && patientMovedFromHome(layer)) {
       const home = flowButton(doc, '歸位', () => resetLayerLayout(layer.type));
-      home.title = '回到這個情境的病患預設位置';
-      const asHome = flowButton(doc, '設為預設', setPatientHomeFromCurrent);
-      asHome.title = '把目前位置設為此情境的預設，之後新增的頁都從這裡開始';
-      tools.append(home, asHome);
+      home.title = `回到「${activeFormatInfo().name}」的病患預設位置`;
+      tools.append(home);
     }
     // 場景與病患是每頁必備、由情境決定的，沒有刪除鍵；
     // 沒有上下鍵則是因為 z 順序由型別決定，投影視窗的 z-index 是寫死的
@@ -3086,6 +3417,58 @@ function previewGreenscreen(layer, canvas) {
 
 // size 是「可佔畫面的百分比」，投影端用 vw/vh。預覽的 stage 不是視窗大小，
 // 所以要換算成 px；百分比放在 shrink-to-fit 的外層裡會被瀏覽器當成沒設。
+// 場景鋪底的框。預覽與投影共用同一份換算（Scenarios.sceneBoxStyle），差別只在
+// 「舞台是誰」——預覽是那個框，投影是整個視窗。
+// 素材的長寬比要等它載完才知道，所以 load 之後要再套一次。
+function mediaAspect(el) {
+  const w = el.naturalWidth || el.videoWidth || 0;
+  const h = el.naturalHeight || el.videoHeight || 0;
+  return h > 0 ? w / h : NaN;
+}
+
+function applySceneBox(el, layout, stageAspect) {
+  if (!el) return;
+  Object.assign(el.style, Scenarios.sceneBoxStyle(layout, mediaAspect(el), stageAspect));
+}
+
+// 場景的框是**情境層**的（一個情境一張背景，取景每頁都一樣），所以跟 slide 無關
+function sceneLayoutOf() {
+  return currentScenario ? Scenarios.sceneFrameFor(currentScenario, activeFormatId()) : null;
+}
+
+// 情境層版面（場景框、病患預設位置）在目前格式下的儲存位置。
+// 基準格式就寫在那個物件上，其他格式寫進它的 layouts[id]——與圖層同一套規則。
+function frameSlot(key, defaults) {
+  if (!currentScenario) return null;
+  if (!currentScenario[key]) currentScenario[key] = { ...defaults };
+  const frame = currentScenario[key];
+  const fmt = activeFormatId();
+  if (fmt === Scenarios.baseFormatId(DATA.options)) return frame;
+  if (!frame.layouts) frame.layouts = {};
+  if (!frame.layouts[fmt]) {
+    frame.layouts[fmt] = Object.fromEntries(
+      Object.keys(defaults).map(k => [k, frame[k] !== undefined ? frame[k] : defaults[k]]));
+  }
+  return frame.layouts[fmt];
+}
+
+const sceneFrameSlot = () => frameSlot('sceneFrame', Scenarios.SCENE_FRAME_DEFAULTS);
+const patientHomeSlot = () => frameSlot('patientHome', Scenarios.LAYER_DEFAULTS.patient);
+
+// 展開「情境設定」時，預覽變成**預設位置的畫布**：顯示的不是某一頁，而是
+// 「新的一頁會長什麼樣」。以前 patientHome 沒有任何地方看得到，只能在某一頁按
+// 「設為預設」把它偷偷寫掉——一個局部按鈕改全域值。
+function editingDefaults() {
+  return panelLevel === 'edit' && settingsExpanded;
+}
+
+let sceneSaveTimer = null;
+function persistSceneFrame() {
+  if (!currentScenario) return;
+  clearTimeout(sceneSaveTimer);
+  sceneSaveTimer = setTimeout(() => saveScenarioOverride(currentScenario), 400);
+}
+
 function placePreviewItem(item, layout, stage) {
   if (!item || !layout) return;
   item.style.left = layout.x + '%';
@@ -3103,8 +3486,15 @@ function placePreviewItem(item, layout, stage) {
 }
 
 function previewLayoutOf(slide, type) {
-  if (type === 'patient') return Scenarios.layerOf(slide, 'patient') ? patientOverlay : null;
-  if (type === 'text') return Scenarios.layerOf(slide, 'text');
+  if (type === 'patient') {
+    if (editingDefaults()) return Scenarios.patientHomeFor(currentScenario, activeFormatId());
+    return Scenarios.layerOf(slide, 'patient') ? patientOverlay : null;
+  }
+  // text 沒有執行期物件，直接算出目前格式生效的那一份
+  if (type === 'text') {
+    const layer = Scenarios.layerOf(slide, 'text');
+    return layer ? Object.assign(Scenarios.layoutFor(layer, activeFormatId()), { text: layer.text }) : null;
+  }
   const green = Scenarios.layerOf(slide, 'greenscreen');
   return green ? complicationOverlay(green.complication) : null;
 }
@@ -3130,6 +3520,7 @@ function updatePreviewLayout() {
   if (!stage) return;
   const slide = (panelLevel === 'edit' && editingSlide()) || currentSlide();
   if (!slide) return;
+  applySceneBox(stage.querySelector('.preview-scene'), sceneLayoutOf(), activeFormatInfo().aspect);
   for (const type of ['patient', 'greenscreen', 'text']) {
     const item = stage.querySelector(`.preview-item[data-type="${type}"]`);
     placePreviewItem(item, previewLayoutOf(slide, type), stage);
@@ -3140,13 +3531,19 @@ function updatePreviewLayout() {
 
 // 動完之後三個地方都要跟上：投影畫面、還留著的滑桿、情境檔
 function commitPreviewLayout(type, comp) {
-  if (type === 'text') renderProjectionText(currentSlide());
+  if (type === 'scene') applyProjectionSceneBox();
+  else if (type === 'text') renderProjectionText(currentSlide());
   else if (type === 'patient') applyPatientOverlayLayout();
   else {
     applyComplicationOverlayLayout();
     if (chromaRedraw && !chromaFrame) chromaRedraw();
   }
   persistLayerLayout(type, comp);
+
+  // 拖完要重繪左欄：「歸位」是否該出現取決於這一頁有沒有偏離預設，而那件事
+  // 剛剛才被改變。不重繪的話，你把病患拖走了，歸位鈕卻要等下一次換頁才冒出來。
+  // **放在拖曳結束、不是拖曳過程**——每一幀重建整個左欄會讓拖曳卡住。
+  if (type === 'patient' && !editingDefaults()) renderFlow();
 }
 
 // 直接在預覽上操作：整塊拖＝移動，右下角把手＝縮放。
@@ -3162,6 +3559,7 @@ function makePreviewDraggable(item, type, comp, stage) {
     event.preventDefault();
     event.stopPropagation();
     const rect = stage.getBoundingClientRect();
+    const box = item.getBoundingClientRect();   // 背景要用它換算「一像素等於幾 %」
     const from = { ...layout() };
     const centre = { x: rect.left + rect.width * from.x / 100, y: rect.top + rect.height * from.y / 100 };
     const startDist = Math.hypot(event.clientX - centre.x, event.clientY - centre.y) || 1;
@@ -3177,13 +3575,23 @@ function makePreviewDraggable(item, type, comp, stage) {
       if (mode === 'resize') {
         const dist = Math.hypot(e.clientX - centre.x, e.clientY - centre.y);
         l.size = clamp(from.size * (dist / startDist), ...Scenarios.LAYER_RANGES.size);
+      } else if (type === 'scene') {
+        // 背景的 x／y 是**對齊比例**不是中心點，所以一個像素值多少 % 取決於
+        // 「圖比舞台大多少」——圖越大，同樣拖一段距離對應的比例越小。
+        // 放大時分母是負的，剛好把方向轉正（往下拖 = 看更下面 = 對齊比例變小）。
+        const dx = rect.width - box.width;
+        const dy = rect.height - box.height;
+        if (dx) l.x = clamp(from.x + (e.clientX - origin.x) / dx * 100, ...Scenarios.LAYER_RANGES.x);
+        if (dy) l.y = clamp(from.y + (e.clientY - origin.y) / dy * 100, ...Scenarios.LAYER_RANGES.y);
       } else {
         l.x = clamp(from.x + (e.clientX - origin.x) / rect.width * 100, ...Scenarios.LAYER_RANGES.x);
         l.y = clamp(from.y + (e.clientY - origin.y) / rect.height * 100, ...Scenarios.LAYER_RANGES.y);
       }
-      placePreviewItem(item, l, stage);
+      if (type === 'scene') applySceneBox(item, l, activeFormatInfo().aspect);
+      else placePreviewItem(item, l, stage);
       // 投影要即時跟著動，教官才看得到自己在調什麼
-      if (type === 'text') renderProjectionText(currentSlide());
+      if (type === 'scene') applyProjectionSceneBox();
+      else if (type === 'text') renderProjectionText(currentSlide());
       else if (type === 'patient') applyPatientOverlayLayout();
       else applyComplicationOverlayLayout();
     };
@@ -3223,17 +3631,88 @@ function buildPreview() {
 
   const wrap = document.createElement('div');
   wrap.className = 'preview';
+
+  // 投影格式的分頁。只在編輯時出現——瀏覽模式是「確認這是不是我要的情境」，
+  // 不該讓人以為自己在調什麼。只有一種格式就整排不出現。
+  const formats = projectionFormats();
+  if (panelLevel === 'edit' && formats.length > 1) {
+    const tabs = document.createElement('div');
+    tabs.className = 'format-tabs';
+    for (const f of formats) {
+      const on = f.id === activeFormatId();
+      const btn = Object.assign(document.createElement('button'), {
+        type: 'button', textContent: f.name,
+      });
+      btn.className = 'format-tab' + (on ? ' active' : '');
+      // 這個格式在這一頁到底調過沒有——沒調過就是照著基準那組在跑
+      const tuned = ['patient', 'greenscreen', 'text']
+        .map(t => Scenarios.layerOf(slide, t))
+        .some(l => l && Scenarios.hasLayoutFor(l, f.id));
+      if (!tuned && f.id !== Scenarios.baseFormatId(DATA.options)) {
+        btn.classList.add('untuned');
+        btn.title = `這一頁還沒有替「${f.name}」調過位置，目前照著基準那一組顯示`;
+      }
+      btn.addEventListener('click', () => setActiveFormat(f.id));
+      tabs.appendChild(btn);
+    }
+    wrap.appendChild(tabs);
+  }
+
   const stage = document.createElement('div');
   stage.className = 'preview-stage';
-
-  const scene = previewImage(layerAsset(Scenarios.layerOf(slide, 'scene'), currentEnvironmentAsset), 'preview-scene');
-  if (scene) stage.appendChild(scene);
-  else stage.appendChild(Object.assign(document.createElement('div'),
-    { className: 'preview-empty', textContent: '這一頁沒有可預覽的場景素材' }));
+  // 兩個地方都要：aspect-ratio 給舞台自己，另一份給上面那條「塞得進這個框」的算式
+  stage.style.setProperty('--stage-aspect', String(activeFormatInfo().aspect));
 
   // 瀏覽模式只是「確認這是不是我要的情境」，不該能改東西——編輯進去才給拖
   const editable = panelLevel !== 'browse';
   if (!editable) stage.classList.add('preview-locked');
+
+  const scene = previewImage(layerAsset(Scenarios.layerOf(slide, 'scene'), currentEnvironmentAsset), 'preview-scene');
+  if (scene) {
+    stage.appendChild(scene);
+    const place = () => applySceneBox(scene, sceneLayoutOf(), activeFormatInfo().aspect);
+    place();                       // 已經在快取裡的圖，load 不會再觸發
+    scene.addEventListener('load', place, { once: true });
+    scene.addEventListener('loadedmetadata', place, { once: true });
+    // 背景可以拖（決定看素材的哪一塊）與滾輪縮放（決定看多大一塊）。
+    // 沒有做成 .preview-item 是因為它不是疊在畫面上的東西，是畫面本身——
+    // 給它一個縮放手把會跟病患的手把長得一樣，但意義完全不同。
+    if (editable) {
+      scene.style.cursor = 'grab';
+      scene.title = '拖曳決定看素材的哪一塊，滾輪縮放';
+      makePreviewDraggable(scene, 'scene', null, stage);
+      stage.addEventListener('wheel', e => {
+        const slot = sceneFrameSlot();
+        if (!slot) return;
+        e.preventDefault();
+        const [lo, hi] = Scenarios.LAYER_RANGES.size;
+        slot.size = Math.max(lo, Math.min(hi, slot.size + (e.deltaY < 0 ? 2 : -2)));
+        applySceneBox(scene, sceneLayoutOf(), activeFormatInfo().aspect);
+        applyProjectionSceneBox();
+        persistSceneFrame();
+      }, { passive: false });
+    }
+  }
+  else stage.appendChild(Object.assign(document.createElement('div'),
+    { className: 'preview-empty', textContent: '這一頁沒有可預覽的場景素材' }));
+
+  if (editingDefaults()) {
+    // 這塊畫布顯示的不是某一頁，是「新的一頁會長什麼樣」。不畫綠幕人物與說明文字：
+    // 那些是逐頁的東西，出現在這裡只會讓人以為自己在改那一頁。
+    const img = previewImage(currentPatientPhotoAsset, '');
+    if (img) {
+      const item = previewItem('patient', img);
+      stage.appendChild(item);
+      const place = () => placePreviewItem(item, previewLayoutOf(slide, 'patient'), stage);
+      img.addEventListener('load', place, { once: true });
+      place();
+      makePreviewDraggable(item, 'patient', null, stage);
+    }
+    stage.appendChild(Object.assign(document.createElement('div'),
+      { className: 'preview-badge', textContent: `預設位置 · ${activeFormatInfo().name}` }));
+    wrap.appendChild(stage);
+    return wrap;
+  }
 
   const patient = Scenarios.layerOf(slide, 'patient');
   const patientImg = previewImage(layerAsset(patient, currentPatientPhotoAsset), '');
@@ -3373,7 +3852,16 @@ function buildBrowseView(doc, preview) {
   return wrap;
 }
 
+// 換畫面等於換脈絡：上一個畫面的訊息會跟著跑過來。實際咬過的例子是
+// 「請先按『開始投影』」——它是瀏覽模式翻到綠幕頁時設的（編輯模式刻意不講這句），
+// 但編輯畫面會顯示紅字，於是那句你此刻根本無能為力的話就掛在頂上不走。
+let lastPanelLevel = null;
+
 function renderFlow() {
+  if (panelLevel !== lastPanelLevel) {
+    if (lastPanelLevel !== null) setStatus('');
+    lastPanelLevel = panelLevel;
+  }
   const box = $('flow');
   const bar = $('stage-bar');
   const preview = currentScenario ? buildPreview() : null;
@@ -3563,6 +4051,9 @@ document.addEventListener('keydown', handleFlowKey);
 
 $('btn-project').addEventListener('click', openProjection);
 $('btn-play').addEventListener('click', toggleAmbience);
+$('btn-mute').addEventListener('click', toggleMute);
+$('volume-slider').addEventListener('input', e => setVolume(e.target.value));
+renderVolumeControl();
 
 // 預覽裡的尺寸有兩項是「依舞台實際寬高算成 px 存下來的」（圖層的尺寸上限、
 // 舞台自己能有多大），視窗一改就過期。編輯畫面是固定一個視窗高的版面，

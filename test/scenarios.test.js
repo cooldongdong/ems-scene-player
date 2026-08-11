@@ -171,7 +171,8 @@ test('版面值省略時補預設，且只補該型別有的欄位', () => {
     ] }],
   }], OPTIONS);
   const [scene, patient, green] = scenarios[0].slides[0].layers;
-  assert.deepEqual(scene, { type: 'scene' });                    // 場景滿版，沒有位置欄位
+  // 場景以前沒有位置欄位；270° 之後它也要能調（size 100 = 剛好蓋滿，等同舊的 cover）
+  assert.deepEqual(scene, { type: 'scene', ...S.LAYER_DEFAULTS.scene });
   assert.deepEqual(patient, { type: 'patient', ...S.LAYER_DEFAULTS.patient });
   assert.equal(green.tolerance, S.LAYER_DEFAULTS.greenscreen.tolerance);
 });
@@ -849,5 +850,187 @@ test('內建 7 組情境的每一頁都有 scene 與 patient', () => {
         assert.ok(S.layerOf(slide, type), `${s.id}/${slide.id} 缺 ${type}`);
       }
     }
+  }
+});
+
+// ---------- 投影格式（COO-104）----------
+
+test('scenario-data.yaml 宣告的投影格式讀得出來，第一個是基準', () => {
+  const formats = S.projectionFormats(OPTIONS);
+  assert.ok(formats.length >= 2);
+  assert.equal(formats[0].id, S.baseFormatId(OPTIONS));
+  for (const f of formats) {
+    assert.ok(f.id && f.name, 'id 與 name 都要有');
+    assert.ok(Number.isFinite(f.aspect) && f.aspect > 0, `${f.id} 的 aspect 不是正數`);
+  }
+});
+
+// 整段刪掉要能退回內建的兩種，而不是變成沒有格式——沒有格式的話所有版面查詢都會炸
+test('沒宣告 projection 時退回內建格式，不會變成空清單', () => {
+  assert.deepEqual(S.projectionFormats({}), S.DEFAULT_PROJECTION_FORMATS);
+  assert.deepEqual(S.projectionFormats(undefined), S.DEFAULT_PROJECTION_FORMATS);
+  // 值不合法的整筆濾掉；全部不合法就退回內建
+  assert.deepEqual(S.projectionFormats({ projection: [{ id: '', aspect: 2 }, { id: 'x' }] }),
+    S.DEFAULT_PROJECTION_FORMATS);
+});
+
+test('投影視窗依自己的長寬比挑格式，挑最接近的那一個', () => {
+  assert.equal(S.formatForAspect(OPTIONS, 16 / 9).id, 'wide');
+  assert.equal(S.formatForAspect(OPTIONS, 5.4).id, 'ultrawide');
+  assert.equal(S.formatForAspect(OPTIONS, 3).id, 'wide', '3 離 1.778 比離 5.333 近');
+  assert.equal(S.formatForAspect(OPTIONS, NaN).id, 'wide', '量不到就用基準');
+});
+
+// **這是這張票的核心不變量**：沒調過的格式退回基準值，不是換算、不是預設值。
+// 換算出來的位置哪裡都不對，卻長得像有人調過，反而沒有人會回去修。
+test('沒有覆寫的格式，版面退回圖層自己那一份', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'patient', size: 40, x: 20, y: 30 }] }],
+  }], OPTIONS);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.deepEqual(S.layoutFor(layer, 'wide'), { size: 40, x: 20, y: 30 });
+  assert.deepEqual(S.layoutFor(layer, 'ultrawide'), { size: 40, x: 20, y: 30 });
+  assert.equal(S.hasLayoutFor(layer, 'ultrawide'), false);
+});
+
+test('覆寫是「部分」的：沒寫的欄位仍然退回基準', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', size: 40, x: 20, y: 30, layouts: { ultrawide: { x: 8 } } },
+    ] }],
+  }], OPTIONS);
+  assert.deepEqual(warnings, []);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.deepEqual(S.layoutFor(layer, 'ultrawide'), { size: 40, x: 8, y: 30 });
+  assert.deepEqual(S.layoutFor(layer, 'wide'), { size: 40, x: 20, y: 30 }, '基準不受影響');
+  assert.equal(S.hasLayoutFor(layer, 'ultrawide'), true);
+});
+
+test('layouts 裡不該出現基準格式——那是同一件事的第二個寫法', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', x: 20, layouts: { wide: { x: 90 } } },
+    ] }],
+  }], OPTIONS);
+  assert.match(warnings.join(''), /基準格式/);
+  assert.equal(S.layoutFor(S.layerOf(scenarios[0].slides[0], 'patient'), 'wide').x, 20);
+});
+
+test('不認得的投影格式與超出範圍的值都擋掉，不讓整層消失', () => {
+  const { scenarios, warnings } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', layouts: { 亂寫: { x: 10 }, ultrawide: { x: 999, size: -5 } } },
+    ] }],
+  }], OPTIONS);
+  assert.match(warnings.join(''), /不認得的投影格式/);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.equal(layer.layouts.亂寫, undefined);
+  assert.equal(S.layoutFor(layer, 'ultrawide').x, S.LAYER_RANGES.x[1], '夾回上限');
+  assert.equal(S.layoutFor(layer, 'ultrawide').size, S.LAYER_RANGES.size[0], '夾回下限');
+});
+
+test('覆寫在匯出／匯入之間往返不變', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [
+      { type: 'patient', size: 40, layouts: { ultrawide: { x: 8, size: 25 } } },
+    ] }],
+  }], OPTIONS);
+  const text = S.exportScenarioYaml(scenarios[0], yaml.dump);
+  assert.ok(text.includes('layouts:'));
+  const back = S.parseImport(text, OPTIONS, yaml.load);
+  assert.deepEqual(back.warnings, []);
+  assert.deepEqual(
+    S.layoutFor(S.layerOf(back.scenarios[0].slides[0], 'patient'), 'ultrawide'),
+    { size: 25, x: 8, y: S.LAYER_DEFAULTS.patient.y });
+});
+
+// 空的覆寫要整個消失，否則匯出檔會長出一堆 `ultrawide: {}`，看起來像調過其實沒有
+test('空的覆寫不留在資料裡', () => {
+  const { scenarios } = S.normalizeScenarios([{
+    id: 'x', name: 'x', environment: '工地', medicalEvent: '外傷出血',
+    slides: [{ id: 'a', title: 'a', layers: [{ type: 'patient', layouts: { ultrawide: {} } }] }],
+  }], OPTIONS);
+  const layer = S.layerOf(scenarios[0].slides[0], 'patient');
+  assert.equal('layouts' in layer, false);
+  assert.equal(S.exportScenarioYaml(scenarios[0], yaml.dump).includes('layouts'), false);
+});
+
+test('現有的 7 組情境都還沒有任何格式覆寫（這次改動不動既有資料）', () => {
+  const { scenarios, warnings } = S.normalizeScenarios(DATA.scenarios, OPTIONS);
+  assert.deepEqual(warnings, []);
+  for (const s of scenarios) {
+    for (const slide of s.slides) {
+      for (const layer of slide.layers) {
+        assert.equal('layouts' in layer, false, `${s.id}／${slide.id} 的 ${layer.type} 冒出了 layouts`);
+      }
+    }
+  }
+});
+
+// ---------- 場景鋪底的框（COO-104）----------
+
+// **size:100 必須等於舊的 cover**，否則既有情境的畫面會變。素材是 1.833:1 而不是
+// 剛好 16:9，所以這條不是形式檢查——改用 contain 當基準就會冒出黑邊。
+test('size 100 在 16:9 舞台上等於 cover：短邊剛好填滿，長邊溢出', () => {
+  const box = S.sceneBoxStyle({ size: 100, x: 50, y: 50 }, 1.833, 16 / 9);
+  // 舞台(1.778)比素材(1.833)窄 → 由高度決定，寬度溢出
+  assert.equal(box.height, '100%');
+  assert.equal(parseFloat(box.width) > 100, true, '寬度要溢出才會被切掉');
+  // 置中：左右溢出的量相等
+  assert.ok(Math.abs(parseFloat(box.left) - (100 - parseFloat(box.width)) / 2) < 0.001);
+  assert.ok(Math.abs(parseFloat(box.top) - (100 - parseFloat(box.height)) / 2) < 0.001);
+});
+
+test('超寬舞台上，size 100 會讓圖高溢出成三倍——這就是只看得到中間三分之一的原因', () => {
+  const box = S.sceneBoxStyle({ size: 100, x: 50, y: 50 }, 1.833, 16 / 3);
+  assert.equal(box.width, '100%');
+  assert.ok(Math.abs(parseFloat(box.height) - (16 / 3) / 1.833 * 100) < 0.5);
+  assert.ok(parseFloat(box.height) > 280, '高度是舞台的近三倍');
+});
+
+test('把 size 調到讓高度剛好等於舞台，整張圖就看得完（代價是左右留黑）', () => {
+  const full = 1.833 / (16 / 3) * 100;          // ≈ 34.4
+  const box = S.sceneBoxStyle({ size: full, x: 50, y: 50 }, 1.833, 16 / 3);
+  assert.ok(Math.abs(parseFloat(box.height) - 100) < 0.5, '高度剛好填滿');
+  assert.ok(parseFloat(box.width) < 40, '寬度只剩三分之一，兩側是黑的');
+});
+
+// **x／y 是對齊比例，不是中心點。** 一開始寫成中心點，結果背景放大之後中心點會
+// 跑到畫面外，而 x／y 夾在 0–100，於是圖的底邊永遠拉不到舞台底邊——差的那 45%
+// 不是範圍不夠大，是模型用錯了。對齊比例的好處是它自己跟著縮放調整。
+test('y=0 貼齊上緣、y=100 貼齊下緣，不管放多大都推得到底', () => {
+  const top = S.sceneBoxStyle({ size: 100, x: 50, y: 0 }, 1.833, 16 / 3);
+  assert.equal(top.top, '0%', 'y=0 圖的上緣對齊舞台上緣');
+
+  const bottom = S.sceneBoxStyle({ size: 100, x: 50, y: 100 }, 1.833, 16 / 3);
+  const h = parseFloat(bottom.height);
+  // 圖的底邊 = top + height，要剛好落在舞台底邊（100%）
+  assert.ok(Math.abs(parseFloat(bottom.top) + h - 100) < 0.001,
+    `底邊落在 ${(parseFloat(bottom.top) + h).toFixed(2)}%，不是 100%`);
+  assert.ok(parseFloat(bottom.top) < -100, '放大時左上角會在畫面外，那是正常的');
+});
+
+test('y=50 就是置中，所以既有資料（預設 50）的畫面完全不變', () => {
+  const box = S.sceneBoxStyle({ size: 100, x: 50, y: 50 }, 1.833, 16 / 3);
+  const h = parseFloat(box.height);
+  assert.ok(Math.abs(parseFloat(box.top) - (100 - h) / 2) < 0.001);
+});
+
+// 縮小到比舞台小的時候（左右留黑）同一個模型仍然成立
+test('縮小時 x=0 貼左、x=100 貼右', () => {
+  const left = S.sceneBoxStyle({ size: 34, x: 0, y: 50 }, 1.833, 16 / 3);
+  const right = S.sceneBoxStyle({ size: 34, x: 100, y: 50 }, 1.833, 16 / 3);
+  assert.equal(left.left, '0%');
+  assert.ok(Math.abs(parseFloat(right.left) + parseFloat(right.width) - 100) < 0.001);
+});
+
+test('缺值與壞值都退回預設，不會算出 NaN%', () => {
+  for (const box of [S.sceneBoxStyle(null, NaN, NaN), S.sceneBoxStyle({}, 0, -1)]) {
+    for (const v of Object.values(box)) assert.ok(!/NaN/.test(v), v);
   }
 });
