@@ -3366,13 +3366,19 @@ function updatePreviewLayout() {
 
 // 動完之後三個地方都要跟上：投影畫面、還留著的滑桿、情境檔
 function commitPreviewLayout(type, comp) {
-  if (type === 'text') renderProjectionText(currentSlide());
+  if (type === 'scene') applyProjectionSceneBox();
+  else if (type === 'text') renderProjectionText(currentSlide());
   else if (type === 'patient') applyPatientOverlayLayout();
   else {
     applyComplicationOverlayLayout();
     if (chromaRedraw && !chromaFrame) chromaRedraw();
   }
   persistLayerLayout(type, comp);
+
+  // 拖完要重繪左欄：「歸位」是否該出現取決於這一頁有沒有偏離預設，而那件事
+  // 剛剛才被改變。不重繪的話，你把病患拖走了，歸位鈕卻要等下一次換頁才冒出來。
+  // **放在拖曳結束、不是拖曳過程**——每一幀重建整個左欄會讓拖曳卡住。
+  if (type === 'patient' && !editingDefaults()) renderFlow();
 }
 
 // 直接在預覽上操作：整塊拖＝移動，右下角把手＝縮放。
