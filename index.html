@@ -1580,7 +1580,9 @@ function buildScenarioSettingsRow(doc) {
   item.className = 'flow-item settings-item' + (settingsExpanded ? ' expanded' : '');
 
   const row = doc.createElement('div');
-  row.className = 'flow-row settings-row clickable';
+  // 展開時借用跟「目前這一頁」同一套 current 樣式：選中就是選中，
+  // 不必為情境設定另外發明一種外觀
+  row.className = 'flow-row settings-row clickable' + (settingsExpanded ? ' current' : '');
   const gear = doc.createElement('span');
   gear.className = 'settings-gear';
   gear.textContent = '⚙';
@@ -2775,7 +2777,10 @@ function buildFlowPanel(doc, preview) {
     item.className = 'flow-item' + (expanded ? ' expanded' : '');
 
     const row = doc.createElement('div');
-    row.className = 'flow-row' + (slide.id === currentSlideId ? ' current' : '')
+    // 情境設定展開時，橘色移到它身上——**同一時間只該有一個東西看起來是「選中的」**。
+    // 兩邊都亮的話，你在改的是預設位置，眼睛卻被某一頁的橘框拉走。
+    row.className = 'flow-row'
+      + (slide.id === currentSlideId && !settingsExpanded ? ' current' : '')
       + (slide.enabled === false ? ' off' : '');
 
     const toggle = doc.createElement('label');
