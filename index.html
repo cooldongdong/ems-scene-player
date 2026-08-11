@@ -575,6 +575,7 @@
   .overlay-controls button.preview.on { border-color: var(--accent); background: var(--accent-dim); }
 
   #status { color: var(--muted); font-size: 13px; }
+  #status:empty { display: none; }
   /* 出錯時要夠明顯：它常常是使用者唯一能看到的線索 */
   #status.error {
     color: var(--accent); font-weight: 600;
@@ -1430,7 +1431,19 @@ function resetLayerLayout(type, comp) {
   else { applyComplicationOverlayLayout(); if (chromaRedraw && !chromaFrame) chromaRedraw(); }
   const slide = editingSlide();
   const layer = slide && Scenarios.layerOf(slide, type);
-  if (layer) Object.assign(layer, defaults);
+  if (layer) {
+    const fmt = activeFormatId();
+    if (fmt === Scenarios.baseFormatId(DATA.options)) {
+      // 基準格式的值就寫在圖層自己身上
+      Object.assign(layer, defaults);
+    } else if (layer.layouts) {
+      // 其他格式：**把覆寫刪掉**，回到「這一頁還沒替這個格式調過」的狀態，
+      // 而不是把預設值抄一份進去。抄一份的話它會變成一筆「調過、剛好等於預設」的
+      // 資料，之後改預設時這一頁不會跟著動。
+      delete layer.layouts[fmt];
+      if (!Object.keys(layer.layouts).length) delete layer.layouts;
+    }
+  }
   persistScenarioEdit();
 }
 
@@ -3687,7 +3700,16 @@ function buildBrowseView(doc, preview) {
   return wrap;
 }
 
+// 換畫面等於換脈絡：上一個畫面的訊息會跟著跑過來。實際咬過的例子是
+// 「請先按『開始投影』」——它是瀏覽模式翻到綠幕頁時設的（編輯模式刻意不講這句），
+// 但編輯畫面會顯示紅字，於是那句你此刻根本無能為力的話就掛在頂上不走。
+let lastPanelLevel = null;
+
 function renderFlow() {
+  if (panelLevel !== lastPanelLevel) {
+    if (lastPanelLevel !== null) setStatus('');
+    lastPanelLevel = panelLevel;
+  }
   const box = $('flow');
   const bar = $('stage-bar');
   const preview = currentScenario ? buildPreview() : null;
