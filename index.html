@@ -302,41 +302,48 @@
      writing-mode 直排 ＋ direction: rtl ＝ 下面是小聲、上面是大聲。 */
   .volume-popup {
     position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
-    /* **bottom 貼著按鈕、間距用 padding 撐**，不是 calc(100% + 8px)：
-       留成空隙的話，滑鼠從按鈕移向滑桿的路上會先離開 .volume，滑桿在半路就消失了。 */
-    padding: 14px 12px 16px; border-radius: 12px;
+    /* 這一層是透明的橋：**貼著按鈕**，滑鼠從按鈕移向滑桿的路上不會離開 .volume。
+       留成真的空隙（bottom: calc(100% + 8px)）的話，滑桿會在半路消失。
+       視覺上的空隙由這層的 padding-bottom 讓出來，看得見的是內層。 */
+    padding-bottom: 8px;
+    opacity: 0; visibility: hidden;
+    /* 淡出：visibility 沒有中間值，所以延後到淡完才切，否則會直接消失 */
+    transition: opacity .18s ease, visibility 0s linear .18s;
+  }
+  .volume:hover .volume-popup,
+  .volume:has(:focus-visible) .volume-popup {
+    opacity: 1; visibility: visible;
+    transition: opacity .18s ease, visibility 0s;
+  }
+  .volume-panel {
+    padding: 14px 12px; border-radius: 12px;
     background: var(--panel-2); border: 1px solid var(--line);
     box-shadow: 0 10px 24px rgba(0, 0, 0, .45);
-    opacity: 0; visibility: hidden; transition: opacity .12s;
   }
-  /* **padding 一定要放在外層，不能放在 input 身上。**
-     放在 input 上時，看得到的膠囊比真正的軌道大一圈——拖到「看起來的底」其實
-     還沒到軌道的底，於是最高與最低都調不到。現在 input 的框就是軌道的範圍。 */
-  .volume-popup input[type=range] {
+  /* **input 的寬度要等於軌道的寬度，不能更寬。**
+     input 16px、軌道 5px 的時候，軌道靠著自己的框對齊、thumb 靠著 input 的框對齊，
+     兩個中心對不上——畫出來就是歪的。左右用 padding 撐出好按的範圍，
+     padding 只影響橫向，不會動到「拖到哪等於幾」。 */
+  .volume-panel input[type=range] {
     -webkit-appearance: none; appearance: none;
     writing-mode: vertical-lr; direction: rtl;
-    width: 16px; height: 104px; margin: 0; padding: 0;
-    background: transparent; cursor: pointer;
+    width: 5px; height: 104px; margin: 0; padding: 0 9px;
+    box-sizing: content-box; background: transparent; cursor: pointer;
   }
   /* 自己畫軌道而不是靠 accent-color：原生那條又粗又鈍。
      已填滿的部分用漸層畫（--fill 由 JS 隨值更新）——自訂軌道之後瀏覽器不會再
      幫你填色，但「填到哪」正是音量最重要的訊息。 */
-  .volume-popup input[type=range]::-webkit-slider-runnable-track {
+  .volume-panel input[type=range]::-webkit-slider-runnable-track {
     width: 5px; height: 100%; border-radius: 999px;
     background: linear-gradient(to top,
       var(--accent) var(--fill, 100%), rgba(255, 255, 255, .14) var(--fill, 100%));
   }
-  .volume-popup input[type=range]::-webkit-slider-thumb {
+  .volume-panel input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
     width: 14px; height: 14px; border-radius: 50%;
     background: #fff; border: 0; box-shadow: 0 1px 3px rgba(0, 0, 0, .5);
   }
-  .volume-popup input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
-  /* **只認滑鼠停留與鍵盤焦點，不認滑鼠點擊留下的焦點。**
-     用 :focus-within 的話，按一下喇叭之後焦點留在按鈕上，滑鼠移開了滑桿還掛在那裡
-     ——那不是 hover 該有的行為。:has(:focus-visible) 只有鍵盤操作才會成立。 */
-  .volume:hover .volume-popup,
-  .volume:has(:focus-visible) .volume-popup { opacity: 1; visibility: visible; }
+  .volume-panel input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   /* 靜音不換顏色：圖示本身（喇叭上打叉）已經說完了，再加一個紅框是同一件事講兩次 */
 
 
@@ -681,9 +688,13 @@
              否則滑桿會在半路消失。 -->
         <div class="volume" id="volume-control">
           <button id="btn-mute" type="button" class="icon-btn" aria-label="靜音"></button>
+          <!-- 兩層：外層是透明的「橋」，一路貼到按鈕，滑鼠移過去的路上不會離開
+               .volume；看得見的那塊是內層，所以視覺上仍有空隙。 -->
           <div class="volume-popup">
-            <input id="volume-slider" type="range" min="0" max="100" step="1"
-                   aria-label="音量" title="音量">
+            <div class="volume-panel">
+              <input id="volume-slider" type="range" min="0" max="100" step="1"
+                     aria-label="音量" title="音量">
+            </div>
           </div>
         </div>
       </div>
