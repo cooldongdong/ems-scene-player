@@ -299,21 +299,30 @@
   }
   .icon-btn svg { width: 18px; height: 18px; display: block; }
   /* 直的滑桿：音量就是「高低」，橫的要在腦子裡轉一次。
-     writing-mode 直排 ＋ direction: rtl ＝ 下面是小聲、上面是大聲。
-     靠右對齊而不是置中：這顆是主控列的最後一個，置中會讓它掉到面板外（實測被切掉）。 */
-  .volume input[type=range] {
-    position: absolute; bottom: calc(100% + 8px); right: 0;
-    writing-mode: vertical-lr; direction: rtl;
-    width: 22px; height: 108px; margin: 0; padding: 10px 8px; box-sizing: content-box;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
-    accent-color: var(--accent);
+     writing-mode 直排 ＋ direction: rtl ＝ 下面是小聲、上面是大聲。 */
+  .volume-popup {
+    position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    /* **bottom 貼著按鈕、間距用 padding 撐**，不是 calc(100% + 8px)：
+       留成空隙的話，滑鼠從按鈕移向滑桿的路上會先離開 .volume，滑桿在半路就消失了。
+       底部多留一點 padding 當「橋」，摸得到又不會擋到按鈕。 */
+    padding: 12px 10px 14px; border-radius: 14px;
+    background: rgba(18, 20, 24, .86); border: 1px solid var(--line);
+    backdrop-filter: blur(6px);
     opacity: 0; visibility: hidden; transition: opacity .12s;
+  }
+  /* **padding 一定要放在外層，不能放在 input 身上。**
+     放在 input 上時，看得到的膠囊比真正的軌道大一圈——拖到「看起來的底」其實
+     還沒到軌道的底，於是最高與最低都調不到。現在 input 的框就是軌道的範圍。 */
+  .volume-popup input[type=range] {
+    writing-mode: vertical-lr; direction: rtl;
+    width: 24px; height: 120px; margin: 0; padding: 0;
+    accent-color: var(--accent); cursor: pointer;
   }
   /* **只認滑鼠停留與鍵盤焦點，不認滑鼠點擊留下的焦點。**
      用 :focus-within 的話，按一下喇叭之後焦點留在按鈕上，滑鼠移開了滑桿還掛在那裡
      ——那不是 hover 該有的行為。:has(:focus-visible) 只有鍵盤操作才會成立。 */
-  .volume:hover input[type=range],
-  .volume:has(:focus-visible) input[type=range] { opacity: 1; visibility: visible; }
+  .volume:hover .volume-popup,
+  .volume:has(:focus-visible) .volume-popup { opacity: 1; visibility: visible; }
   /* 靜音不換顏色：圖示本身（喇叭上打叉）已經說完了，再加一個紅框是同一件事講兩次 */
 
 
@@ -658,8 +667,10 @@
              否則滑桿會在半路消失。 -->
         <div class="volume" id="volume-control">
           <button id="btn-mute" type="button" class="icon-btn" aria-label="靜音"></button>
-          <input id="volume-slider" type="range" min="0" max="100" step="1"
-                 aria-label="音量" title="音量">
+          <div class="volume-popup">
+            <input id="volume-slider" type="range" min="0" max="100" step="1"
+                   aria-label="音量" title="音量">
+          </div>
         </div>
       </div>
     </section>
